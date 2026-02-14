@@ -274,7 +274,7 @@ async def start_quiz_session(
     """
     session_key = f"{current_user.id}_{request.session_id}"
     
-    response = quiz_agent.start_session(
+    response = await quiz_agent.start_session(
         session_id=session_key,
         domain=request.domain,
         purpose=request.purpose,

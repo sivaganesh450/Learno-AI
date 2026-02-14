@@ -1919,7 +1919,7 @@ RULES:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-1.5-flash-001",
                 contents=f"You are a math solution formatter. Create clean, well-structured solutions.\n\n{formatter_prompt}"
             )
             formatted = response.text.strip()
@@ -1960,7 +1960,7 @@ RULES:
         print(f"[Math Memory] Session: {session_id}, History: {len(history_messages)} messages")
         
         # AGENT 1: Classify the problem
-        yield "🔍 **Analyzing problem type...**\n\n"
+        yield "**Analyzing problem type...**\n\n"
         
         problem_lower = problem.lower()
         problem_type = "General Mathematics"
@@ -1980,19 +1980,19 @@ RULES:
                 problem_type = category
                 break
         
-        yield f"📐 **Problem Type:** {problem_type}\n\n"
+        yield f"**Problem Type:** {problem_type}\n\n"
         
         # AGENT 3: Try tool execution first
         tool_result = None
         if self.sympy_available:
             tool_result = self._try_sympy_solve(problem, problem_type)
             if tool_result:
-                yield f"🔧 **Tool Verification:** SymPy calculated → `{tool_result}`\n\n"
+                yield f"**Tool Verification:** SymPy calculated -> `{tool_result}`\n\n"
         
         if tool_result is None and self.numpy_available:
             tool_result = self._try_numpy_solve(problem, problem_type)
             if tool_result:
-                yield f"🔧 **Tool Verification:** NumPy calculated → `{tool_result}`\n\n"
+                yield f"**Tool Verification:** NumPy calculated -> `{tool_result}`\n\n"
         
         yield "---\n\n"
         
@@ -2055,7 +2055,7 @@ IMPORTANT RULES:
         full_response = ""
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-1.5-flash",
+                model="gemini-1.5-flash-001",
                 contents=f"You are an expert math tutor. Solve problems step-by-step in clean plain text.\n\n{solve_prompt}"
             )
             for chunk in response:
@@ -2096,17 +2096,17 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ---
 
-**📷 Problem from Image**
+**Problem from Image**
 
 [Write out the exact problem you see in the image]
 
 ---
 
-**📌 Problem Type:** [Category]
+**Problem Type:** [Category]
 
 ---
 
-**📝 Solution**
+**Solution**
 
 **Step 1:** [Explanation and calculation]
 
@@ -2116,13 +2116,13 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ---
 
-**✅ Answer**
+**Answer**
 
 [Clear final answer]
 
 ---
 
-**💡 Key Concept**
+**Key Concept**
 
 [Brief explanation of the method used]
 
@@ -2149,7 +2149,7 @@ IMPORTANT RULES:
             # Note: Gemini 2.0 Flash supports interleaved text and image
             
             response = self.client.models.generate_content_stream(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash-001",
                 contents=[
                     vision_prompt,
                     types.Part.from_bytes(data=image_bytes, mime_type="image/png")
@@ -2172,11 +2172,11 @@ IMPORTANT RULES:
             yield f"""
 ---
 
-**⚠️ Vision Processing Note**
+**Vision Processing Note**
 
 Unable to process the image directly. Error: {str(e)}
 
-**💡 Suggestions:**
+**Suggestions:**
 - Make sure you're using a vision-capable model (e.g., llama3.2-vision, llava)
 - Try typing the problem manually instead
 - Ensure the image is clear and readable
@@ -2347,11 +2347,11 @@ class JobSearchAgent:
         formatted = f"""
 ### {index}. {title}
 
-📍 **Source:** {source}
+**Source:** {source}
 
-📝 {content}
+{content}
 
-🔗 [**Apply Now**]({url})
+[**Apply Now**]({url})
 
 ---
 """
