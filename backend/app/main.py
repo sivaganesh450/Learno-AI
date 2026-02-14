@@ -22,9 +22,8 @@ app = FastAPI(
 
 # Configure CORS
 origins = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:3000",
+    "https://learno-ai.onrender.com",
+    "https://learno-ai-nu.vercel.app",
 ]
 
 # Add production origins from env
