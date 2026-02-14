@@ -20,15 +20,9 @@ class UserService:
         print(f"[DEBUG] Creating user with email: {user.email}")
         
         # Validate password length
-        # Validate password length (Bcrypt has a 72 byte limit)
         if len(user.password) < 6:
             print(f"[DEBUG] Password too short: {len(user.password)} characters")
             raise ValueError("Password must be at least 6 characters long")
-        
-        # Check byte length for Bcrypt compatibility
-        if len(user.password.encode('utf-8')) > 72:
-            print(f"[DEBUG] Password too long (bytes): {len(user.password.encode('utf-8'))}")
-            raise ValueError("Password is too long (must be under 72 bytes)")
         
         # Check if user already exists
         existing_user = await collection.find_one({"email": user.email})
