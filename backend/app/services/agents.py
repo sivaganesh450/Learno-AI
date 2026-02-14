@@ -167,7 +167,7 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
         try:
             print(f"Calling Gemini API for roadmap: {topic}")
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             
@@ -502,7 +502,7 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
         
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             for chunk in response:
@@ -637,7 +637,7 @@ class ResourcesAgent:
         try:
             print(f"Calling Gemini for resources: {topic}")
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             
@@ -896,7 +896,7 @@ The conversation history below shows what was previously discussed. Use it to pr
         
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             for chunk in response:
@@ -953,7 +953,7 @@ class SummarizerAgent:
         try:
             print(f"Calling Gemini API for Q&A: {question[:50]}...")
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             
@@ -1066,7 +1066,7 @@ Note: No documents have been uploaded yet. For document-based Q&A, please upload
         
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             for chunk in response:
@@ -1236,7 +1236,7 @@ EXPLANATION: [Brief explanation of why this is correct]"""
         else:
             try:
                 response = self.client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.5-flash",
                     contents=f"{system_prompt}\n\nGenerate a {difficulty} MCQ for {domain} ({purpose})"
                 )
                 mcq_text = response.text.strip()
@@ -1686,7 +1686,7 @@ Be specific and mathematical. Output in plain text only."""
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=f"You are a math reasoning expert. Analyze problems and plan solutions.\n\n{reasoning_prompt}"
             )
             reasoning = response.text.strip()
@@ -1919,7 +1919,7 @@ RULES:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash-001",
+                model="gemini-2.5-flash",
                 contents=f"You are a math solution formatter. Create clean, well-structured solutions.\n\n{formatter_prompt}"
             )
             formatted = response.text.strip()
@@ -2055,7 +2055,7 @@ IMPORTANT RULES:
         full_response = ""
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-1.5-flash-001",
+                model="gemini-2.5-flash",
                 contents=f"You are an expert math tutor. Solve problems step-by-step in clean plain text.\n\n{solve_prompt}"
             )
             for chunk in response:
@@ -2149,7 +2149,7 @@ IMPORTANT RULES:
             # Note: Gemini 2.0 Flash supports interleaved text and image
             
             response = self.client.models.generate_content_stream(
-                model="gemini-1.5-flash-001",
+                model="gemini-2.5-flash",
                 contents=[
                     vision_prompt,
                     types.Part.from_bytes(data=image_bytes, mime_type="image/png")
