@@ -53,12 +53,13 @@ except ImportError:
 from google import genai
 
 # ChromaDB with default embeddings
+# ChromaDB with default embeddings
 try:
     import chromadb
     from chromadb.config import Settings
     from chromadb.utils import embedding_functions
-except ImportError:
-    print("Warning: ChromaDB not installed.")
+except Exception as e:
+    print(f"Warning: ChromaDB failed to initialize: {e}")
     chromadb = None
 
 # Tavily for web search
