@@ -24,6 +24,12 @@ except ImportError:
     DocxDocument = None
     print("Warning: python-docx not installed. DOCX support disabled.")
 
+try:
+    from pptx import Presentation
+except ImportError:
+    Presentation = None
+    print("Warning: python-pptx not installed. PPTX support disabled.")
+
 # Image processing
 from PIL import Image
 
@@ -229,6 +235,22 @@ class RAGService:
             print(f"Error extracting DOCX: {e}")
         return text
     
+    def _extract_text_from_pptx(self, file_path: str) -> str:
+        """Extract text from PPTX file"""
+        if not Presentation:
+            return "[PPTX support disabled. Install python-pptx]"
+        
+        text = ""
+        try:
+            prs = Presentation(file_path)
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text += shape.text + "\n"
+        except Exception as e:
+            print(f"Error extracting PPTX: {e}")
+        return text
+
     def _extract_text_from_txt(self, file_path: str) -> str:
         """Extract text from TXT file"""
         try:
@@ -288,6 +310,8 @@ class RAGService:
                 text = self._extract_text_from_pdf(tmp_path)
             elif suffix in ['.docx', '.doc']:
                 text = self._extract_text_from_docx(tmp_path)
+            elif suffix in ['.pptx', '.ppt']:
+                text = self._extract_text_from_pptx(tmp_path)
             elif suffix in ['.txt', '.md', '.py', '.js', '.json', '.csv']:
                 text = self._extract_text_from_txt(tmp_path)
             elif suffix in ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp']:
@@ -382,7 +406,7 @@ Rephrased Query (standalone question):"""
         
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=rephraser_prompt
             )
             rephrased = response.text.strip()

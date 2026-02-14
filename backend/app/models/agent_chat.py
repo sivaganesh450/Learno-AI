@@ -34,6 +34,7 @@ class AgentChatInDB(BaseModel):
     agent_type: str  # Which agent this chat belongs to
     title: str  # Chat title (usually from first message)
     messages: List[ChatMessage] = []
+    session_data: dict = Field(default_factory=dict)  # Store agent-specific state (e.g., quiz score)
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -53,6 +54,7 @@ class AgentChatResponse(BaseModel):
     agent_type: str
     title: str
     messages: List[ChatMessage]
+    session_data: Optional[dict] = {}
     is_active: bool
     created_at: datetime
     updated_at: datetime

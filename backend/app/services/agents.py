@@ -167,7 +167,7 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
         try:
             print(f"Calling Gemini API for roadmap: {topic}")
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             
@@ -502,7 +502,7 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
         
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             for chunk in response:
@@ -637,7 +637,7 @@ class ResourcesAgent:
         try:
             print(f"Calling Gemini for resources: {topic}")
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             
@@ -896,7 +896,7 @@ The conversation history below shows what was previously discussed. Use it to pr
         
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             for chunk in response:
@@ -953,7 +953,7 @@ class SummarizerAgent:
         try:
             print(f"Calling Gemini API for Q&A: {question[:50]}...")
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             
@@ -1066,7 +1066,7 @@ Note: No documents have been uploaded yet. For document-based Q&A, please upload
         
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"{system_prompt}\n\n{user_prompt}"
             )
             for chunk in response:
@@ -1102,36 +1102,54 @@ class QuizAgent:
     5. If rating < 3, user must improve to proceed
     """
     
-    def __init__(self):
-        self.name = "Question Answering System"
+
     def __init__(self):
         self.name = "Question Answering System"
         self.client = client
-        # Session data for MCQ quiz
-        self.sessions: Dict[str, Dict] = {}
+        # Persistence handled by agent_chat_service
+        from app.services.agent_chat_service import agent_chat_service
+        self.chat_service = agent_chat_service
     
-    def _get_session(self, session_id: str) -> Dict:
-        """Get or create session data"""
-        if session_id not in self.sessions:
-            self.sessions[session_id] = {
-                "domain": None,
-                "purpose": None,
-                "difficulty": None,
-                "score": 0,
-                "questions_asked": 0,
-                "current_question": None,
-                "current_options": {},
-                "correct_answer": None,
-                "explanation": "",
-                "awaiting_answer": False,
-                "needs_retry": False,
-                "history": []
-            }
-        return self.sessions[session_id]
-    
-    def start_session(self, session_id: str, domain: str, purpose: str, difficulty: str) -> str:
+    async def _get_session(self, session_id: str) -> Dict:
+        """Get session data from DB"""
+        try:
+            user_id, chat_id = session_id.split("_")
+            data = await self.chat_service.get_session_data(chat_id, user_id)
+            
+            # Initialize default structure if empty
+            if not data:
+                data = {
+                    "domain": None,
+                    "purpose": None,
+                    "difficulty": None,
+                    "score": 0,
+                    "questions_asked": 0,
+                    "current_question": None,
+                    "current_options": {},
+                    "correct_answer": None,
+                    "explanation": "",
+                    "awaiting_answer": False,
+                    "needs_retry": False,
+                    "history": []
+                }
+                # Save initial state
+                await self.chat_service.update_session_data(chat_id, user_id, data)
+            return data
+        except ValueError:
+            print(f"Invalid session_id format: {session_id}")
+            return {}
+
+    async def _save_session(self, session_id: str, data: Dict):
+        """Save session data to DB"""
+        try:
+            user_id, chat_id = session_id.split("_")
+            await self.chat_service.update_session_data(chat_id, user_id, data)
+        except Exception as e:
+            print(f"Error saving session: {e}")
+
+    async def start_session(self, session_id: str, domain: str, purpose: str, difficulty: str) -> str:
         """Initialize a quiz session with user preferences"""
-        session = self._get_session(session_id)
+        session = await self._get_session(session_id)
         session["domain"] = domain
         session["purpose"] = purpose
         session["difficulty"] = difficulty
@@ -1144,6 +1162,8 @@ class QuizAgent:
         session["awaiting_answer"] = False
         session["needs_retry"] = False
         session["history"] = []
+        
+        await self._save_session(session_id, session)
         
         purpose_text = {
             "interview": "interview preparation",
@@ -1165,9 +1185,9 @@ Type **"start"** when you're ready for your first question!"""
     
     async def generate_question(self, session_id: str) -> str:
         """Generate a multiple choice question based on session parameters"""
-        session = self._get_session(session_id)
+        session = await self._get_session(session_id)
         
-        if not session["domain"]:
+        if not session.get("domain"):
             return "Please start a session first by providing domain, purpose, and difficulty level."
         
         domain = session["domain"]
@@ -1176,7 +1196,7 @@ Type **"start"** when you're ready for your first question!"""
         questions_asked = session["questions_asked"]
         
         # Build context from previous questions to avoid repetition
-        prev_questions = [q["question"] for q in session["history"][-5:]] if session["history"] else []
+        prev_questions = [q["question"] for q in session.get("history", [])[-5:]] if session.get("history") else []
         prev_context = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None yet"
         
         system_prompt = f"""You are an expert examiner for {domain}.
@@ -1216,7 +1236,7 @@ EXPLANATION: [Brief explanation of why this is correct]"""
         else:
             try:
                 response = self.client.models.generate_content(
-                    model="gemini-2.0-flash-lite-001",
+                    model="gemini-1.5-flash",
                     contents=f"{system_prompt}\n\nGenerate a {difficulty} MCQ for {domain} ({purpose})"
                 )
                 mcq_text = response.text.strip()
@@ -1279,6 +1299,8 @@ EXPLANATION: [Brief explanation of why this is correct]"""
         session["awaiting_answer"] = True
         session["questions_asked"] += 1
         
+        await self._save_session(session_id, session)
+        
         return f"""📝 **Question {session["questions_asked"]}** ({difficulty.title()})
 
 {question}
@@ -1293,9 +1315,9 @@ EXPLANATION: [Brief explanation of why this is correct]"""
     
     async def evaluate_answer(self, session_id: str, user_answer: str) -> str:
         """Evaluate user's MCQ answer"""
-        session = self._get_session(session_id)
+        session = await self._get_session(session_id)
         
-        if not session["current_question"]:
+        if not session.get("current_question"):
             return "No active question. Type **'next'** to get a new question."
         
         question = session["current_question"]
@@ -1317,12 +1339,14 @@ EXPLANATION: [Brief explanation of why this is correct]"""
         is_correct = user_choice == correct
         
         # Store in history
-        session["history"].append({
+        history = session.get("history", [])
+        history.append({
             "question": question,
             "answer": user_choice,
             "correct_answer": correct,
             "is_correct": is_correct
         })
+        session["history"] = history
         
         if is_correct:
             session["score"] += 1
@@ -1364,13 +1388,14 @@ Type **'next'** to continue to the next question or **'score'** to see your prog
             session["awaiting_answer"] = False
             session["current_question"] = None
         
+        await self._save_session(session_id, session)
         return result
     
-    def get_score(self, session_id: str) -> str:
+    async def get_score(self, session_id: str) -> str:
         """Get current score and progress"""
-        session = self._get_session(session_id)
+        session = await self._get_session(session_id)
         
-        if session["questions_asked"] == 0:
+        if session.get("questions_asked", 0) == 0:
             return "No questions answered yet. Start your session first!"
         
         correct = session["score"]
@@ -1382,30 +1407,30 @@ Type **'next'** to continue to the next question or **'score'** to see your prog
                       "Good 👍" if percentage >= 60 else \
                       "Needs Improvement 📚"
         
-        return f"""## 📈 Your Progress
+        return f"""## Your Progress
 
-**Domain:** {session["domain"]}
-**Purpose:** {session["purpose"].title()}
-**Difficulty:** {session["difficulty"].title()}
+**Domain:** {session.get("domain")}
+**Purpose:** {session.get("purpose", "").title()}
+**Difficulty:** {session.get("difficulty", "").title()}
 
 ---
 
 | Metric | Value |
 |--------|-------|
 | Questions Answered | {total} |
-| Correct Answers | {correct} ✅ |
-| Wrong Answers | {total - correct} ❌ |
+| Correct Answers | {correct} |
+| Wrong Answers | {total - correct} |
 | Accuracy | {percentage:.0f}% |
 | Performance | {performance} |
-
+"""
 ---
 Type **'next'** to continue or **'end'** to finish the session."""
     
-    def end_session(self, session_id: str) -> str:
+    async def end_session(self, session_id: str) -> str:
         """End the quiz session and show final results"""
-        session = self._get_session(session_id)
+        session = await self._get_session(session_id)
         
-        if session["questions_asked"] == 0:
+        if session.get("questions_asked", 0) == 0:
             return "No session to end. Start a new session to begin!"
         
         correct = session["score"]
@@ -1438,37 +1463,51 @@ Type **'next'** to continue or **'end'** to finish the session."""
             message = "You need more study. Review the topics and try again."
             emoji = "📖"
         
-        result = f"""## {emoji} Session Complete!
+        result = f"""## Session Complete!
 
-### Final Results for {session["domain"]}
+### Final Results for {session.get("domain")}
 
 | Metric | Value |
 |--------|-------|
-| Purpose | {session["purpose"].title()} |
-| Difficulty | {session["difficulty"].title()} |
+| Purpose | {session.get("purpose", "").title()} |
+| Difficulty | {session.get("difficulty", "").title()} |
 | Questions Answered | {total} |
-| Correct Answers | {correct} ✅ |
-| Wrong Answers | {total - correct} ❌ |
+| Correct Answers | {correct} |
+| Wrong Answers | {total - correct} |
 | Accuracy | {percentage:.0f}% |
 | **Grade** | **{grade}** |
 
 ---
 
-### 📝 Feedback
+### Feedback
 {message}
 
 ---
 *Start a new session anytime by selecting domain, purpose, and difficulty!*"""
         
-        # Clear session
-        if session_id in self.sessions:
-            del self.sessions[session_id]
+        # Clear session (mark as inactive/reset in DB)
+        # We'll just reset the session data but keep history if needed or just empty it
+        empty_data = {
+            "domain": None,
+            "purpose": None,
+            "difficulty": None,
+            "score": 0,
+            "questions_asked": 0,
+            "current_question": None,
+            "current_options": {},
+            "correct_answer": None,
+            "explanation": "",
+            "awaiting_answer": False,
+            "needs_retry": False,
+            "history": []
+        }
+        await self._save_session(session_id, empty_data)
         
         return result
     
     async def process_message(self, message: str, session_id: str) -> str:
         """Process user message and determine action"""
-        session = self._get_session(session_id)
+        session = await self._get_session(session_id)
         msg_lower = message.lower().strip()
         
         # Handle commands
@@ -1476,10 +1515,10 @@ Type **'next'** to continue or **'end'** to finish the session."""
             return await self.generate_question(session_id)
         
         elif msg_lower == "score":
-            return self.get_score(session_id)
+            return await self.get_score(session_id)
         
         elif msg_lower == "end" or msg_lower == "finish" or msg_lower == "quit":
-            return self.end_session(session_id)
+            return await self.end_session(session_id)
         
         elif msg_lower == "help":
             return """## 🆘 Quiz Commands
@@ -1653,7 +1692,7 @@ Be specific and mathematical. Output in plain text only."""
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"You are a math reasoning expert. Analyze problems and plan solutions.\n\n{reasoning_prompt}"
             )
             reasoning = response.text.strip()
@@ -1886,7 +1925,7 @@ RULES:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"You are a math solution formatter. Create clean, well-structured solutions.\n\n{formatter_prompt}"
             )
             formatted = response.text.strip()
@@ -2022,7 +2061,7 @@ IMPORTANT RULES:
         full_response = ""
         try:
             response = self.client.models.generate_content_stream(
-                model="gemini-2.0-flash-lite-001",
+                model="gemini-1.5-flash",
                 contents=f"You are an expert math tutor. Solve problems step-by-step in clean plain text.\n\n{solve_prompt}"
             )
             for chunk in response:

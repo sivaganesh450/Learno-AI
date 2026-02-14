@@ -261,7 +261,7 @@ async def send_message_stream(
                 
                 # Check if session needs to be started
                 if form_data.get("domain"):
-                    quiz_agent.start_session(
+                    await quiz_agent.start_session(
                         session_id=session_key,
                         domain=form_data.get("domain", ""),
                         purpose=form_data.get("purpose", "interview"),
@@ -391,7 +391,7 @@ async def send_message(
             session_key = f"{user_id}_{chat.chat_id}"
             
             if form_data.get("domain"):
-                quiz_agent.start_session(
+                await quiz_agent.start_session(
                     session_id=session_key,
                     domain=form_data.get("domain", ""),
                     purpose=form_data.get("purpose", "interview"),

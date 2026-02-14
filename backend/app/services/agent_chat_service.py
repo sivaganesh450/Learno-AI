@@ -275,6 +275,37 @@ class AgentChatService:
         
         return result.modified_count > 0
     
+    async def get_session_data(self, chat_id: str, user_id: str) -> dict:
+        """Get session data for a chat"""
+        collection = await self.get_collection()
+        chat = await collection.find_one({"chat_id": chat_id, "user_id": user_id}, {"session_data": 1})
+        if chat and "session_data" in chat:
+            return chat["session_data"]
+        return {}
+
+    async def update_session_data(self, chat_id: str, user_id: str, data: dict) -> bool:
+        """Update session data for a chat (merges with existing data)"""
+        collection = await self.get_collection()
+        
+        # Merge new data with existing checks
+        update_ops = {f"session_data.{k}": v for k, v in data.items()}
+        update_ops["updated_at"] = datetime.utcnow()
+        
+        result = await collection.update_one(
+            {"chat_id": chat_id, "user_id": user_id},
+            {"$set": update_ops}
+        )
+        return result.modified_count > 0
+    
+    async def set_session_data(self, chat_id: str, user_id: str, data: dict) -> bool:
+        """Set (replace) session data for a chat"""
+        collection = await self.get_collection()
+        result = await collection.update_one(
+            {"chat_id": chat_id, "user_id": user_id},
+            {"$set": {"session_data": data, "updated_at": datetime.utcnow()}}
+        )
+        return result.modified_count > 0
+    
     async def get_or_create_chat(
         self,
         user_id: str,
