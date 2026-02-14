@@ -16,8 +16,13 @@ from typing import List, Dict, Optional
 from pathlib import Path
 
 # Document loaders
+# Document loaders
 from pypdf import PdfReader
-from docx import Document as DocxDocument
+try:
+    from docx import Document as DocxDocument
+except ImportError:
+    DocxDocument = None
+    print("Warning: python-docx not installed. DOCX support disabled.")
 
 # Image processing
 from PIL import Image
@@ -33,17 +38,28 @@ except:
     print("Tesseract not available for image OCR")
 
 # LangChain components
-from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_community.chat_message_histories import ChatMessageHistory
-# from langchain_ollama import ChatOllama # Removed Ollama
+# LangChain components
+try:
+    from langchain_core.documents import Document
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    from langchain_community.chat_message_histories import ChatMessageHistory
+except ImportError:
+    print("Warning: LangChain components not fully installed.")
+    Document = None
+    RecursiveCharacterTextSplitter = None
+    HumanMessage, AIMessage, SystemMessage = None, None, None
+    ChatMessageHistory = None
 from google import genai
 
 # ChromaDB with default embeddings
-import chromadb
-from chromadb.config import Settings
-from chromadb.utils import embedding_functions
+try:
+    import chromadb
+    from chromadb.config import Settings
+    from chromadb.utils import embedding_functions
+except ImportError:
+    print("Warning: ChromaDB not installed.")
+    chromadb = None
 
 # Tavily for web search
 from tavily import TavilyClient
