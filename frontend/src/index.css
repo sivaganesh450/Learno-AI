@@ -1,0 +1,136 @@
+/* Lerno Color Theme: Purple Gradient Theme */
+:root {
+  --primary-purple: #8b5cf6;
+  --dark-purple: #6d28d9;
+  --light-purple: #a78bfa;
+  --primary-blue: #1e88e5;
+  --dark-blue: #0d47a1;
+  --light-blue: #64b5f6;
+  --primary-green: #10b981;
+  --primary-orange: #f59e0b;
+  --primary-pink: #ec4899;
+  --black: #000000;
+  --dark-gray: #1f2937;
+  --medium-gray: #6b7280;
+  --light-gray: #e5e7eb;
+  --white: #ffffff;
+  --off-white: #f9fafb;
+  --border-color: #e5e7eb;
+  --success: #10b981;
+  --error: #ef4444;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  line-height: 1.6;
+  color: var(--medium-gray);
+  background-color: var(--off-white);
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--black);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 2rem; }
+h3 { font-size: 1.75rem; }
+h4 { font-size: 1.5rem; }
+h5 { font-size: 1.25rem; }
+h6 { font-size: 1rem; }
+
+a {
+  color: var(--primary-blue);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+a:hover {
+  color: var(--dark-blue);
+}
+
+/* Buttons */
+button {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  outline: none;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  color: var(--white);
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+.btn-secondary {
+  background-color: var(--white);
+  color: #8b5cf6;
+  border: 2px solid #8b5cf6;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #8b5cf6;
+  color: var(--white);
+}
+
+/* Input fields */
+input, textarea {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.75rem;
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.3s ease;
+  width: 100%;
+}
+
+input:focus, textarea:focus {
+  border-color: var(--primary-blue);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--off-white);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--light-gray);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-blue);
+}
