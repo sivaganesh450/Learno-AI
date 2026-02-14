@@ -1402,10 +1402,10 @@ Type **'next'** to continue to the next question or **'score'** to see your prog
         total = session["questions_asked"]
         percentage = (correct / total) * 100 if total > 0 else 0
         
-        performance = "Excellent! 🌟" if percentage >= 90 else \
-                      "Great! 👏" if percentage >= 75 else \
-                      "Good 👍" if percentage >= 60 else \
-                      "Needs Improvement 📚"
+        performance = "Excellent!" if percentage >= 90 else \
+                      "Great!" if percentage >= 75 else \
+                      "Good" if percentage >= 60 else \
+                      "Needs Improvement"
         
         return f"""## Your Progress
 
@@ -1420,9 +1420,9 @@ Type **'next'** to continue to the next question or **'score'** to see your prog
 | Questions Answered | {total} |
 | Correct Answers | {correct} |
 | Wrong Answers | {total - correct} |
-| Accuracy | {percentage:.0f}% |
+| Accuracy | {int(percentage)}% |
 | Performance | {performance} |
-"""
+
 ---
 Type **'next'** to continue or **'end'** to finish the session."""
     
@@ -1433,39 +1433,33 @@ Type **'next'** to continue or **'end'** to finish the session."""
         if session.get("questions_asked", 0) == 0:
             return "No session to end. Start a new session to begin!"
         
-        correct = session["score"]
-        total = session["questions_asked"]
+        correct = session.get("score", 0)
+        total = session.get("questions_asked", 0)
         percentage = (correct / total) * 100 if total > 0 else 0
         
         # Performance grade based on percentage
         if percentage >= 90:
             grade = "A+"
             message = "Outstanding performance! You've demonstrated excellent mastery."
-            emoji = "🏆"
         elif percentage >= 80:
             grade = "A"
             message = "Excellent work! You have a strong understanding."
-            emoji = "🥇"
         elif percentage >= 70:
             grade = "B+"
             message = "Great job! You're well-prepared."
-            emoji = "🥈"
         elif percentage >= 60:
             grade = "B"
             message = "Good performance! Keep practicing to improve further."
-            emoji = "🥉"
         elif percentage >= 50:
             grade = "C"
             message = "Fair performance. More practice is recommended."
-            emoji = "📚"
         else:
             grade = "D"
             message = "You need more study. Review the topics and try again."
-            emoji = "📖"
         
         result = f"""## Session Complete!
 
-### Final Results for {session.get("domain")}
+### Final Results for {session.get("domain", "Unknown")}
 
 | Metric | Value |
 |--------|-------|
@@ -1474,7 +1468,7 @@ Type **'next'** to continue or **'end'** to finish the session."""
 | Questions Answered | {total} |
 | Correct Answers | {correct} |
 | Wrong Answers | {total - correct} |
-| Accuracy | {percentage:.0f}% |
+| Accuracy | {int(percentage)}% |
 | **Grade** | **{grade}** |
 
 ---
@@ -1483,10 +1477,10 @@ Type **'next'** to continue or **'end'** to finish the session."""
 {message}
 
 ---
-*Start a new session anytime by selecting domain, purpose, and difficulty!*"""
+*Start a new session anytime by selecting domain, purpose, and difficulty!*
+"""
         
         # Clear session (mark as inactive/reset in DB)
-        # We'll just reset the session data but keep history if needed or just empty it
         empty_data = {
             "domain": None,
             "purpose": None,
@@ -1559,8 +1553,8 @@ class MathSolverAgent:
     Advanced Math Problem Solver Agent with Multi-Agent Architecture.
     
     Flow:
-    User Input → Math Classifier Agent → Reasoning Agent (LLaMA) → 
-    Tool Executor Agent (SymPy/NumPy) → Solution Formatter Agent → Final Answer
+    User Input -> Math Classifier Agent -> Reasoning Agent (LLaMA) -> 
+    Tool Executor Agent (SymPy/NumPy) -> Solution Formatter Agent -> Final Answer
     
     Supports: Algebra, Calculus, Probability, Linear Algebra, Geometry, Trigonometry, Statistics
     """
@@ -1883,17 +1877,17 @@ Create a beautiful, well-formatted solution following this EXACT structure:
 
 ---
 
-**📌 Problem**
+**Problem**
 
 [Restate the problem clearly]
 
 ---
 
-**🔢 Problem Type:** {problem_type}
+**Problem Type:** {problem_type}
 
 ---
 
-**📝 Solution**
+**Solution**
 
 **Step 1:** [First step with explanation]
 
@@ -1903,13 +1897,13 @@ Create a beautiful, well-formatted solution following this EXACT structure:
 
 ---
 
-**✅ Answer**
+**Answer**
 
 [State the final answer clearly - use the verified calculation if provided]
 
 ---
 
-**💡 Method Used**
+**Method Used**
 
 [Brief explanation of the approach]
 
@@ -2012,13 +2006,13 @@ PROBLEM: {problem}
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
-**📌 Problem**
+**Problem**
 
 [Restate the problem]
 
 ---
 
-**📝 Solution**
+**Solution**
 
 **Step 1:** [Explanation and work]
 
@@ -2028,13 +2022,13 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ---
 
-**✅ Answer**
+**Answer**
 
 [Final answer - {"use the VERIFIED ANSWER: " + str(tool_result) if tool_result else "calculate carefully"}]
 
 ---
 
-**💡 Key Concept**
+**Key Concept**
 
 [Brief explanation]
 
