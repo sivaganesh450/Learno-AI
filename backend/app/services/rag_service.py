@@ -60,7 +60,17 @@ from google import genai
 
 # ChromaDB with default embeddings
 # ChromaDB with default embeddings
+# ChromaDB with default embeddings
 try:
+    # Fix for Render/Linux SQLite version issues
+    import sys
+    try:
+        __import__('pysqlite3')
+        sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+        print("Successfully patched sqlite3 with pysqlite3")
+    except ImportError:
+        print("pysqlite3 not found, using system sqlite3")
+
     import chromadb
     from chromadb.config import Settings
     from chromadb.utils import embedding_functions
