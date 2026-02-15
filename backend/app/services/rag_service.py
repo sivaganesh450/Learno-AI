@@ -72,7 +72,7 @@ try:
         print("pysqlite3 not found, using system sqlite3")
 
     import chromadb
-    from chromadb.config import Settings
+    # from chromadb.config import Settings - Removed to avoid Pydantic error
     from chromadb.utils import embedding_functions
 except Exception as e:
     print(f"Warning: ChromaDB failed to initialize: {e}")
