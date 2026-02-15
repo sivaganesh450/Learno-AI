@@ -1111,9 +1111,19 @@ class QuizAgent:
         self.chat_service = agent_chat_service
     
     async def _get_session(self, session_id: str) -> Dict:
-        """Get session data from DB"""
+        """Get session data from DB (ensuring chat exists)"""
         try:
             user_id, chat_id = session_id.split("_")
+            
+            # Ensure chat session exists in DB
+            await self.chat_service.get_or_create_chat(
+                user_id=user_id,
+                agent_type="quiz",
+                chat_id=chat_id,
+                initial_message="Start Quiz"
+            )
+            
+            # Now safe to get session data
             data = await self.chat_service.get_session_data(chat_id, user_id)
             
             # Initialize default structure if empty
@@ -1137,6 +1147,9 @@ class QuizAgent:
             return data
         except ValueError:
             print(f"Invalid session_id format: {session_id}")
+            return {}
+        except Exception as e:
+            print(f"Error getting session: {e}")
             return {}
 
     async def _save_session(self, session_id: str, data: Dict):
@@ -1197,7 +1210,7 @@ Type **"start"** when you're ready for your first question!"""
         
         # Build context from previous questions to avoid repetition
         prev_questions = [q["question"] for q in session.get("history", [])[-5:]] if session.get("history") else []
-        prev_context = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None yet"
+        prev_context = "\\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None yet"
         
         system_prompt = f"""You are an expert examiner for {domain}.
 Generate exactly ONE multiple choice question (MCQ) with 4 options.
@@ -1213,14 +1226,18 @@ IMPORTANT RULES:
 Previous questions asked (avoid repeating similar topics):
 {prev_context}
 
-FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
-QUESTION: [Your question here]
-A) [Option A]
-B) [Option B]
-C) [Option C]
-D) [Option D]
-CORRECT: [A/B/C/D]
-EXPLANATION: [Brief explanation of why this is correct]"""
+FORMAT YOUR RESPONSE AS A VALID JSON OBJECT:
+{{
+  "question": "The question text",
+  "options": {{
+    "A": "Option A text",
+    "B": "Option B text",
+    "C": "Option C text",
+    "D": "Option D text"
+  }},
+  "correct_answer": "A",
+  "explanation": "Brief explanation of why the answer is correct"
+}}"""
         
         if not self.client:
             # Fallback MCQ questions
@@ -1235,50 +1252,36 @@ EXPLANATION: [Brief explanation of why this is correct]"""
             explanation = f"{domain} helps organize and structure code for better maintainability."
         else:
             try:
+                # Import json for parsing
+                import json
+                from google.genai import types
+                
                 response = self.client.models.generate_content(
                     model="gemini-2.5-flash",
-                    contents=f"{system_prompt}\n\nGenerate a {difficulty} MCQ for {domain} ({purpose})"
+                    contents=f"{system_prompt}\n\nGenerate a {difficulty} MCQ for {domain} ({purpose})",
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
                 )
-                mcq_text = response.text.strip()
                 
-                # Parse the MCQ response
-                question = ""
-                options = {"A": "", "B": "", "C": "", "D": ""}
-                correct = "A"
-                explanation = ""
-                
-                lines = mcq_text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line.startswith('QUESTION:'):
-                        question = line.split(':', 1)[1].strip()
-                    elif line.startswith('A)') or line.startswith('A.'):
-                        options["A"] = line[2:].strip()
-                    elif line.startswith('B)') or line.startswith('B.'):
-                        options["B"] = line[2:].strip()
-                    elif line.startswith('C)') or line.startswith('C.'):
-                        options["C"] = line[2:].strip()
-                    elif line.startswith('D)') or line.startswith('D.'):
-                        options["D"] = line[2:].strip()
-                    elif line.startswith('CORRECT:'):
-                        correct = line.split(':', 1)[1].strip().upper()
-                        if correct not in ["A", "B", "C", "D"]:
-                            correct = "A"
-                    elif line.startswith('EXPLANATION:'):
-                        explanation = line.split(':', 1)[1].strip()
-                
-                # Validate parsing
-                if not question or not all(options.values()):
-                    question = f"Which of the following best describes {domain}?"
-                    options = {
-                        "A": "A programming concept",
-                        "B": "A design pattern",
-                        "C": "A development methodology",
-                        "D": "All of the above"
-                    }
-                    correct = "D"
-                    explanation = f"{domain} encompasses multiple aspects of software development."
+                # Parse the JSON response
+                try:
+                    quiz_data = json.loads(response.text.strip())
+                    question = quiz_data.get("question", "Error parsing question")
+                    options = quiz_data.get("options", {"A": "Error", "B": "Error", "C": "Error", "D": "Error"})
+                    correct = quiz_data.get("correct_answer", "A").upper()
+                    explanation = quiz_data.get("explanation", "No explanation provided.")
                     
+                    # Validate options
+                    if not isinstance(options, dict) or not all(k in options for k in ["A", "B", "C", "D"]):
+                        raise ValueError("Invalid options format")
+                        
+                except Exception as parse_error:
+                    print(f"JSON parsing error: {parse_error}")
+                    # Fallback parsing if JSON fails or is malformed
+                    question = "Error generating question. Please try 'next' again."
+                    options = {"A": "Retry", "B": "Retry", "C": "Retry", "D": "Retry"}
+                    correct = "A"
+                    explanation = "An error occurred during generation."
+
             except Exception as e:
                 print(f"Error generating MCQ: {e}")
                 question = f"What is {domain}?"

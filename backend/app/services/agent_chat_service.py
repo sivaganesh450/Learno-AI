@@ -57,12 +57,14 @@ class AgentChatService:
         user_id: str,
         agent_type: str,
         title: Optional[str] = None,
-        initial_message: Optional[str] = None
+        initial_message: Optional[str] = None,
+        chat_id: Optional[str] = None
     ) -> AgentChatInDB:
         """Create a new chat session"""
         collection = await self.get_collection()
         
-        chat_id = self._generate_chat_id()
+        if not chat_id:
+            chat_id = self._generate_chat_id()
         
         # Generate title if not provided
         if not title and initial_message:
@@ -323,7 +325,8 @@ class AgentChatService:
         return await self.create_chat(
             user_id=user_id,
             agent_type=agent_type,
-            initial_message=initial_message
+            initial_message=initial_message,
+            chat_id=chat_id
         )
 
 
