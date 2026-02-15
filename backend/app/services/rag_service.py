@@ -102,7 +102,8 @@ class RAGService:
         # Use ephemeral client (in-memory) to avoid persistence issues
         # Documents will be re-uploaded each session
         try:
-            self.chroma_client = chromadb.Client()
+            self.chroma_client = chromadb.EphemeralClient()
+            print("ChromaDB EphemeralClient initialized")
             
             # Use ChromaDB's default embedding function
             self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
