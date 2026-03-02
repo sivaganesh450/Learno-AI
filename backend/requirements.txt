@@ -1,25 +1,48 @@
+# Web framework
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+httpx==0.28.1
+
+# Database
 pymongo==4.6.3
 motor==3.3.2
+dnspython
+certifi
+
+# Auth & security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.12
+python-dotenv==1.0.1
+
+# Pydantic
 pydantic==2.9.2
 pydantic-settings==2.5.2
-python-dotenv==1.0.1
-openai==1.54.3
-anthropic==0.39.0
-langchain==0.3.7
-langchain-core==0.3.15
-langchain-openai==0.2.8
-langchain-anthropic==0.2.4
-langgraph==0.2.45
-httpx==0.27.2
-certifi
-dnspython
-tavily-python
-pillow>=10.0.0
-easyocr>=1.7.0
-sympy>=1.12
-numpy>=1.24.0
+
+# LangChain ecosystem (all pinned to compatible versions)
+langchain==0.3.27
+langchain-core==1.2.16
+langchain-community==0.4.1
+langchain-text-splitters==0.3.11
+langchain-ollama==0.2.1
+langchain-google-genai==4.2.1
+langgraph==1.0.1
+
+# Google AI
+google-generativeai==0.8.6
+google-genai==1.65.0
+
+# Web search
+tavily-python==0.7.21
+
+# Vector store
+chromadb==1.4.1
+
+# Image / OCR
+pillow==11.2.1
+pytesseract==0.3.13
+pandas==2.2.3
+
+# Math / numeric
+sympy==1.14.0
+numpy==2.4.2
