@@ -19,13 +19,12 @@ python-dotenv==1.0.1
 pydantic>=2.9.2
 pydantic-settings>=2.5.2
 
-# LangChain ecosystem — let pip resolve langchain/langchain-core versions
-# from sub-package constraints to avoid conflicts
-langchain-community==0.4.1
-langchain-text-splitters==0.3.11
-langchain-ollama==0.2.1
-langchain-google-genai==4.2.1
-langgraph==1.0.1
+# LangChain ecosystem — minimum bounds only; pip resolves compatible versions
+langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0
+langchain-ollama>=0.1.0
+langchain-google-genai>=2.0.0
+langgraph>=0.2.0
 
 # Google AI
 google-generativeai>=0.8.0
