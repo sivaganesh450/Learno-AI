@@ -617,7 +617,8 @@ async def solve_math_image_stream(
     async def stream_generator() -> AsyncGenerator[str, None]:
         try:
             # Send acknowledgment that image was received
-            yield f"data: {json.dumps({'chunk': '📷 **Analyzing image...**\\n\\n'})}\n\n"
+            _ack = "📷 **Analyzing image...**\n\n"
+            yield f"data: {json.dumps({'chunk': _ack})}\n\n"
             
             # Solve the problem from the image using base64
             async for chunk in math_solver_agent.solve_from_image_stream(image_base64, session_key):
