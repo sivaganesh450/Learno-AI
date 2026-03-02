@@ -1,6 +1,6 @@
 import api from './api';
 
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export const agentService = {
   // Generate a learning roadmap (non-streaming)
@@ -210,7 +210,7 @@ export const agentService = {
     formData.append('file', file);
     
     const token = localStorage.getItem('token');
-    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/agents/qa/upload?session_id=${sessionId}`, {
+    const response = await fetch(`${API_BASE_URL}/agents/qa/upload?session_id=${sessionId}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`
@@ -256,7 +256,7 @@ export const agentService = {
     const token = localStorage.getItem('token');
     
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/agents/quiz/stream`, {
+      const response = await fetch(`${API_BASE_URL}/agents/quiz/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
