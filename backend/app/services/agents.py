@@ -7,7 +7,7 @@ from typing import TypedDict, Annotated, List, Optional, Dict
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 import operator
 import os
@@ -35,29 +35,27 @@ except Exception as e:
     print(f"Warning: Could not initialize Tavily client: {e}")
     tavily_client = None
 
-# Initialize Local Llama LLM via Ollama
+# Initialize Gemini LLM (used by most agents)
 try:
-    llm = ChatOllama(
-        model="llama3.2:latest",
-        temperature=0.7,
-        base_url="http://localhost:11434"
-    )
-    print("Successfully initialized Ollama with llama3.2 model")
+    from app.core.config import settings as _agent_settings
+    _gemini_api_key = _agent_settings.GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY")
+    _gemini_model = _agent_settings.GEMINI_MODEL
+    if _gemini_api_key:
+        llm = ChatGoogleGenerativeAI(
+            model=_gemini_model,
+            google_api_key=_gemini_api_key,
+            temperature=0.7,
+        )
+        print(f"Successfully initialized Gemini LLM ({_gemini_model})")
+    else:
+        print("Warning: GOOGLE_API_KEY not set — LLM disabled")
+        llm = None
 except Exception as e:
-    print(f"Warning: Could not initialize Ollama LLM: {e}")
+    print(f"Warning: Could not initialize Gemini LLM: {e}")
     llm = None
 
-# Initialize Vision LLM for image processing (using llava model)
-try:
-    vision_llm = ChatOllama(
-        model="llava:latest",
-        temperature=0.3,
-        base_url="http://localhost:11434"
-    )
-    print("Successfully initialized Ollama with llava vision model")
-except Exception as e:
-    print(f"Warning: Could not initialize Vision LLM: {e}")
-    vision_llm = None
+# Vision LLM — Gemini supports multimodal natively
+vision_llm = llm  # reuse the same Gemini model for vision tasks
 
 
 # State definitions for each agent
@@ -2107,7 +2105,7 @@ IMPORTANT RULES:
         global vision_llm
         
         if not vision_llm:
-            yield "Error: Vision LLM (llava) not initialized. Please run: ollama pull llava"
+            yield "Error: Vision LLM not initialized. Please set GOOGLE_API_KEY in environment variables."
             return
         
         # Get conversation history
@@ -2211,7 +2209,7 @@ IMPORTANT RULES:
 Unable to process the image directly. Error: {str(e)}
 
 **💡 Suggestions:**
-- Make sure you're using a vision-capable model (e.g., llama3.2-vision, llava)
+- Make sure GOOGLE_API_KEY is set correctly in your environment
 - Try typing the problem manually instead
 - Ensure the image is clear and readable
 

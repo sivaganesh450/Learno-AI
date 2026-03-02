@@ -22,7 +22,6 @@ pydantic-settings>=2.5.2
 # LangChain ecosystem — minimum bounds only; pip resolves compatible versions
 langchain-community>=0.2.0
 langchain-text-splitters>=0.2.0
-langchain-ollama>=0.1.0
 langchain-google-genai>=2.0.0
 langgraph>=0.2.0
 
