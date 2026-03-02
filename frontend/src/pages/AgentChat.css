@@ -713,6 +713,52 @@
   margin: 1rem 0;
 }
 
+/* Code blocks rendered in chat messages */
+.code-block {
+  position: relative;
+  background: #1e1e2e;
+  border-radius: 10px;
+  margin: 0.75rem 0;
+  overflow: hidden;
+  border: 1px solid #313244;
+}
+
+.code-block .code-lang {
+  display: block;
+  background: #313244;
+  color: #cba6f7;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.3rem 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.code-block pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: #cdd6f4;
+  white-space: pre;
+}
+
+/* Inline code */
+.inline-code {
+  background: #313244;
+  color: #f38ba8;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 0.82em;
+  padding: 0.15em 0.45em;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
 /* Math Image Upload Panel */
 .math-upload-panel {
   display: flex;

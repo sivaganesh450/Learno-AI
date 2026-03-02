@@ -54,6 +54,22 @@ const Dashboard = () => {
       icon: '💼',
       color: '#4caf50',
       bgColor: '#e8f5e9'
+    },
+    {
+      id: 'code_assistant',
+      name: 'Code Assistant',
+      description: 'Solve coding problems with AI-powered code generation and automatic error correction. Iteratively refines code until it runs correctly.',
+      icon: '👨‍💻',
+      color: '#00897b',
+      bgColor: '#e0f2f1'
+    },
+    {
+      id: 'deep_search',
+      name: 'Deep Search & Report Generator',
+      description: 'Generate comprehensive research reports on any topic. Uses parallel AI agents to research, write and refine every section with live web data.',
+      icon: '📊',
+      color: '#6d4c41',
+      bgColor: '#efebe9'
     }
   ];
 

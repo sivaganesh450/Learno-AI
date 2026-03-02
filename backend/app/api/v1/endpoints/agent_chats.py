@@ -25,7 +25,9 @@ from app.services.agents import (
     summarizer_agent,
     quiz_agent,
     math_solver_agent,
-    job_search_agent
+    job_search_agent,
+    code_assistant_agent,
+    deep_search_agent
 )
 
 router = APIRouter()
@@ -261,7 +263,7 @@ async def send_message_stream(
                 
                 # Check if session needs to be started
                 if form_data.get("domain"):
-                    await quiz_agent.start_session(
+                    quiz_agent.start_session(
                         session_id=session_key,
                         domain=form_data.get("domain", ""),
                         purpose=form_data.get("purpose", "interview"),
@@ -304,6 +306,20 @@ async def send_message_stream(
                     full_response += chunk
                     yield f"data: {json.dumps({'chunk': chunk})}\n\n"
             
+            elif request.agent_type == "code_assistant":
+                async for chunk in code_assistant_agent.solve_stream(
+                    problem=request.message
+                ):
+                    full_response += chunk
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+
+            elif request.agent_type == "deep_search":
+                async for chunk in deep_search_agent.generate_stream(
+                    topic=request.message
+                ):
+                    full_response += chunk
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+
             else:
                 full_response = "Unknown agent type"
                 yield f"data: {json.dumps({'chunk': full_response})}\n\n"
@@ -391,7 +407,7 @@ async def send_message(
             session_key = f"{user_id}_{chat.chat_id}"
             
             if form_data.get("domain"):
-                await quiz_agent.start_session(
+                quiz_agent.start_session(
                     session_id=session_key,
                     domain=form_data.get("domain", ""),
                     purpose=form_data.get("purpose", "interview"),
@@ -418,6 +434,12 @@ async def send_message(
                 query=query,
                 location=location
             )
+        
+        elif request.agent_type == "code_assistant":
+            response = await code_assistant_agent.solve(problem=request.message)
+        
+        elif request.agent_type == "deep_search":
+            response = await deep_search_agent.generate(topic=request.message)
         
         else:
             response = "Unknown agent type"

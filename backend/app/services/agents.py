@@ -7,34 +7,57 @@ from typing import TypedDict, Annotated, List, Optional, Dict
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
-# from langchain_ollama import ChatOllama # Removed Ollama
+from langchain_ollama import ChatOllama
+from pydantic import BaseModel, Field
 import operator
 import os
+import asyncio
 import httpx
 import io
 from dotenv import load_dotenv
 from tavily import TavilyClient
 from PIL import Image
-from google import genai
 
 load_dotenv()
 
+# Read API keys from settings (no hardcodes)
+from app.core.config import settings as _settings
+_TAVILY_API_KEY = _settings.TAVILY_API_KEY or os.environ.get("TAVILY_API_KEY", "")
+
 # Initialize Tavily client for resource searching and job search
-TAVILY_API_KEY = "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"
 try:
-    tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
-    print("Successfully initialized Tavily client")
+    tavily_client = TavilyClient(api_key=_TAVILY_API_KEY) if _TAVILY_API_KEY else None
+    if tavily_client:
+        print("Successfully initialized Tavily client")
+    else:
+        print("Warning: TAVILY_API_KEY not set — web search disabled")
 except Exception as e:
     print(f"Warning: Could not initialize Tavily client: {e}")
     tavily_client = None
 
-# Initialize Google GenAI Client
+# Initialize Local Llama LLM via Ollama
 try:
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-    print("Successfully initialized Google GenAI client")
+    llm = ChatOllama(
+        model="llama3.2:latest",
+        temperature=0.7,
+        base_url="http://localhost:11434"
+    )
+    print("Successfully initialized Ollama with llama3.2 model")
 except Exception as e:
-    print(f"Warning: Could not initialize Google GenAI client: {e}")
-    client = None
+    print(f"Warning: Could not initialize Ollama LLM: {e}")
+    llm = None
+
+# Initialize Vision LLM for image processing (using llava model)
+try:
+    vision_llm = ChatOllama(
+        model="llava:latest",
+        temperature=0.3,
+        base_url="http://localhost:11434"
+    )
+    print("Successfully initialized Ollama with llava vision model")
+except Exception as e:
+    print(f"Warning: Could not initialize Vision LLM: {e}")
+    vision_llm = None
 
 
 # State definitions for each agent
@@ -98,12 +121,57 @@ class JobSearchState(TypedDict):
     jobs: Optional[List[Dict]]
 
 
+# ===== Code Assistant =====
+class CodeSolution(BaseModel):
+    """Structured schema for generated code (PREFIX + IMPORTS + CODE)"""
+    prefix: str = Field(description="Brief description of the approach and what the code does")
+    imports: str = Field(description="All import statements needed (empty string if none)")
+    code: str = Field(description="The complete solution code, excluding import statements")
+
+
+class CodeAssistantState(TypedDict):
+    """State for Code Assistant Agent with generate → execute & reflect loop"""
+    messages: Annotated[List, operator.add]
+    problem: str
+    solution: Optional[CodeSolution]
+    error: Optional[str]
+    attempt_count: int
+    max_attempts: int
+    final_response: Optional[str]
+
+
+# ===== Deep Search & Report Generator =====
+class ReportSection(BaseModel):
+    """Single planned section returned by the Report Planner"""
+    title: str = Field(description="Section title (e.g. 'Introduction', 'Market Overview', 'Conclusion')")
+    description: str = Field(description="What this section must cover and its purpose in the report")
+
+
+class ReportPlan(BaseModel):
+    """Structured report plan output by the Report Planner node"""
+    report_title: str = Field(description="A concise, descriptive title for the full report")
+    sections: List[ReportSection] = Field(
+        description="Ordered sections. First MUST be 'Introduction', last MUST be 'Conclusion'."
+    )
+
+
+class DeepSearchState(TypedDict):
+    """State for Deep Search & Report Generator following the multi-agent diagram"""
+    messages: Annotated[List, operator.add]
+    topic: str
+    report_plan: Optional[ReportPlan]           # output of Report Planner
+    section_research: Optional[Dict[str, str]]  # section title → raw research notes
+    section_drafts: Optional[Dict[str, str]]    # section title → first draft
+    section_finals: Optional[Dict[str, str]]    # section title → polished final
+    final_report: Optional[str]
+
+
 class RoadmapAgent:
     """Agent for generating personalized learning roadmaps using Gemini"""
     
     def __init__(self):
         self.name = "Roadmap Generator"
-        self.client = client
+        self.llm = llm
         self.graph = self._build_graph()
     
     def _build_graph(self):
@@ -125,9 +193,9 @@ class RoadmapAgent:
         duration = state["duration"]
         skills_known = state.get("skills_known", "")
         
-        # If Client is not available, use fallback
-        if not self.client:
-            print("Gemini client not available, using fallback")
+        # If LLM is not available, use fallback
+        if not self.llm:
+            print("LLM not available, using fallback")
             return self._fallback_roadmap(topic, skill_level, duration, skills_known)
         
         system_prompt = """You are an expert learning path designer. Create detailed, structured learning roadmaps.
@@ -166,17 +234,14 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
         
         try:
             print(f"Calling Gemini API for roadmap: {topic}")
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\n{user_prompt}"
-            )
+            response = self.llm.invoke(messages)
             
             # Validate response
-            if response and response.text:
-                content = response.text.strip()
+            if response and hasattr(response, 'content') and response.content:
+                content = response.content.strip()
                 
                 # Check if response is valid (not just echoing the prompt)
-                if len(content) > 100 and ("Phase" in content or "Week" in content or "#" in content):
+                if len(content) > 100 and "Phase" in content or "Week" in content or "#" in content:
                     print("Successfully generated roadmap from Gemini")
                     return {
                         "messages": [AIMessage(content=content)],
@@ -466,7 +531,7 @@ Build a comprehensive project that showcases all your skills.
     
     async def generate_stream(self, message: str, topic: str, skill_level: str, duration: str, skills_known: str = ""):
         """Generate a roadmap with streaming response"""
-        if not self.client:
+        if not self.llm:
             # Fallback - yield the whole response at once
             result = await self.generate(message, topic, skill_level, duration, skills_known)
             yield result
@@ -500,14 +565,15 @@ Student Details:
 
 Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. Include specific topics, resources, projects, and milestones for each phase."""
         
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
         try:
-            response = self.client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\n{user_prompt}"
-            )
-            for chunk in response:
-                if chunk.text:
-                    yield chunk.text
+            async for chunk in self.llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    yield chunk.content
         except Exception as e:
             print(f"Streaming error: {e}")
             # Fallback to non-streaming
@@ -520,7 +586,7 @@ class ResourcesAgent:
     
     def __init__(self):
         self.name = "Resources Provider"
-        self.client = client
+        self.llm = llm
         self.tavily = tavily_client
         self.graph = self._build_graph()
         # Store ChatMessageHistory per session (like the notebook pattern)
@@ -619,8 +685,9 @@ class ResourcesAgent:
         # Search for recent resources using Tavily
         tavily_results = self._search_tavily(topic, "papers")
         
-        if not self.client:
-            print("Gemini client not initialized, using fallback for resources")
+        # If LLM is not available, use fallback with Tavily results
+        if not self.llm:
+            print("LLM not available, using fallback for resources")
             return self._fallback_resources(topic, skill_level, resource_type, tavily_results)
         
         # Include Tavily results in the prompt for LLM
@@ -634,33 +701,35 @@ class ResourcesAgent:
         
         user_prompt = f"Recommend the best learning resources for {topic} for a {skill_level} learner.{type_filter} Include online courses, books, video tutorials, practice platforms, and communities. Mark each as free or paid.{tavily_context}"
         
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
         try:
-            print(f"Calling Gemini for resources: {topic}")
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\n{user_prompt}"
-            )
+            print(f"Calling LLM for resources: {topic}")
+            response = self.llm.invoke(messages)
             
             # Validate response
-            if response and response.text:
-                content = response.text.strip()
+            if response and hasattr(response, 'content') and response.content:
+                content = response.content.strip()
                 
                 # Check if response is valid
                 if len(content) > 100:
-                    print("Successfully generated resources from Gemini")
+                    print("Successfully generated resources from LLM")
                     return {
                         "messages": [AIMessage(content=content)],
                         "resources": content
                     }
                 else:
-                    print(f"Invalid response from Gemini for resources, using fallback")
+                    print(f"Invalid response from LLM for resources, using fallback")
                     return self._fallback_resources(topic, skill_level, resource_type, tavily_results)
             else:
-                print("Empty response from Gemini for resources, using fallback")
+                print("Empty response from LLM for resources, using fallback")
                 return self._fallback_resources(topic, skill_level, resource_type, tavily_results)
                 
         except Exception as e:
-            print(f"Gemini API error: {e}")
+            print(f"LLM API error: {e}")
             return self._fallback_resources(topic, skill_level, resource_type, tavily_results)
     
     def _fallback_resources(self, topic: str, skill_level: str, resource_type: str, tavily_results: str = "") -> dict:
@@ -839,7 +908,7 @@ class ResourcesAgent:
     
     async def get_resources_stream(self, message: str, topic: str, resource_type: str = "all", session_id: str = "default"):
         """Get curated resources with streaming response, including Tavily search and conversation history"""
-        if not self.client:
+        if not self.llm:
             result = await self.get_resources(message, topic, resource_type, session_id)
             yield result
             return
@@ -895,14 +964,10 @@ The conversation history below shows what was previously discussed. Use it to pr
         full_response = ""
         
         try:
-            response = self.client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\n{user_prompt}"
-            )
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield chunk.text
+            async for chunk in self.llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    full_response += chunk.content
+                    yield chunk.content
             
             # Save the ORIGINAL user message (not the formatted prompt) for natural history
             if full_response:
@@ -918,7 +983,7 @@ class SummarizerAgent:
     
     def __init__(self):
         self.name = "Summarizer"
-        self.client = client
+        self.llm = llm
         self.graph = self._build_graph()
         
         # Import RAG service
@@ -941,25 +1006,27 @@ class SummarizerAgent:
         """Answer user's question using Gemini"""
         question = state["question"]
         
-        # If client is not available, use fallback
-        if not self.client:
-            print("Gemini client not available, using fallback for Q&A")
+        # If LLM is not available, use fallback
+        if not self.llm:
+            print("LLM not available, using fallback for Q&A")
             return self._fallback_answer(question)
         
         system_prompt = """You are an expert educator and tutor. Answer questions clearly with examples, code snippets when relevant, and practical explanations. Use markdown formatting."""
         
         user_prompt = f"Answer this question comprehensively: {question}"
         
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
         try:
             print(f"Calling Gemini API for Q&A: {question[:50]}...")
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\n{user_prompt}"
-            )
+            response = self.llm.invoke(messages)
             
             # Validate response
-            if response and response.text:
-                content = response.text.strip()
+            if response and hasattr(response, 'content') and response.content:
+                content = response.content.strip()
                 
                 # Check if response is valid
                 if len(content) > 50:
@@ -1048,7 +1115,7 @@ Thank you for your question! Unfortunately, I'm currently experiencing high dema
             return
         
         # Fallback to regular LLM if no documents uploaded
-        if not self.client:
+        if not self.llm:
             result = await self.answer(question, session_id)
             yield result
             return
@@ -1065,13 +1132,9 @@ Note: No documents have been uploaded yet. For document-based Q&A, please upload
         ]
         
         try:
-            response = self.client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\n{user_prompt}"
-            )
-            for chunk in response:
-                if chunk.text:
-                    yield chunk.text
+            async for chunk in self.llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    yield chunk.content
         except Exception as e:
             print(f"Streaming error: {e}")
             result = await self.answer(question, session_id)
@@ -1102,67 +1165,34 @@ class QuizAgent:
     5. If rating < 3, user must improve to proceed
     """
     
-
     def __init__(self):
         self.name = "Question Answering System"
-        self.client = client
-        # Persistence handled by agent_chat_service
-        from app.services.agent_chat_service import agent_chat_service
-        self.chat_service = agent_chat_service
+        self.llm = llm
+        # Session data for MCQ quiz
+        self.sessions: Dict[str, Dict] = {}
     
-    async def _get_session(self, session_id: str) -> Dict:
-        """Get session data from DB (ensuring chat exists)"""
-        try:
-            user_id, chat_id = session_id.split("_")
-            
-            # Ensure chat session exists in DB
-            await self.chat_service.get_or_create_chat(
-                user_id=user_id,
-                agent_type="quiz",
-                chat_id=chat_id,
-                initial_message="Start Quiz"
-            )
-            
-            # Now safe to get session data
-            data = await self.chat_service.get_session_data(chat_id, user_id)
-            
-            # Initialize default structure if empty
-            if not data:
-                data = {
-                    "domain": None,
-                    "purpose": None,
-                    "difficulty": None,
-                    "score": 0,
-                    "questions_asked": 0,
-                    "current_question": None,
-                    "current_options": {},
-                    "correct_answer": None,
-                    "explanation": "",
-                    "awaiting_answer": False,
-                    "needs_retry": False,
-                    "history": []
-                }
-                # Save initial state
-                await self.chat_service.update_session_data(chat_id, user_id, data)
-            return data
-        except ValueError:
-            print(f"Invalid session_id format: {session_id}")
-            return {}
-        except Exception as e:
-            print(f"Error getting session: {e}")
-            return {}
-
-    async def _save_session(self, session_id: str, data: Dict):
-        """Save session data to DB"""
-        try:
-            user_id, chat_id = session_id.split("_")
-            await self.chat_service.update_session_data(chat_id, user_id, data)
-        except Exception as e:
-            print(f"Error saving session: {e}")
-
-    async def start_session(self, session_id: str, domain: str, purpose: str, difficulty: str) -> str:
+    def _get_session(self, session_id: str) -> Dict:
+        """Get or create session data"""
+        if session_id not in self.sessions:
+            self.sessions[session_id] = {
+                "domain": None,
+                "purpose": None,
+                "difficulty": None,
+                "score": 0,
+                "questions_asked": 0,
+                "current_question": None,
+                "current_options": {},
+                "correct_answer": None,
+                "explanation": "",
+                "awaiting_answer": False,
+                "needs_retry": False,
+                "history": []
+            }
+        return self.sessions[session_id]
+    
+    def start_session(self, session_id: str, domain: str, purpose: str, difficulty: str) -> str:
         """Initialize a quiz session with user preferences"""
-        session = await self._get_session(session_id)
+        session = self._get_session(session_id)
         session["domain"] = domain
         session["purpose"] = purpose
         session["difficulty"] = difficulty
@@ -1175,8 +1205,6 @@ class QuizAgent:
         session["awaiting_answer"] = False
         session["needs_retry"] = False
         session["history"] = []
-        
-        await self._save_session(session_id, session)
         
         purpose_text = {
             "interview": "interview preparation",
@@ -1198,9 +1226,9 @@ Type **"start"** when you're ready for your first question!"""
     
     async def generate_question(self, session_id: str) -> str:
         """Generate a multiple choice question based on session parameters"""
-        session = await self._get_session(session_id)
+        session = self._get_session(session_id)
         
-        if not session.get("domain"):
+        if not session["domain"]:
             return "Please start a session first by providing domain, purpose, and difficulty level."
         
         domain = session["domain"]
@@ -1209,8 +1237,8 @@ Type **"start"** when you're ready for your first question!"""
         questions_asked = session["questions_asked"]
         
         # Build context from previous questions to avoid repetition
-        prev_questions = [q["question"] for q in session.get("history", [])[-5:]] if session.get("history") else []
-        prev_context = "\\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None yet"
+        prev_questions = [q["question"] for q in session["history"][-5:]] if session["history"] else []
+        prev_context = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None yet"
         
         system_prompt = f"""You are an expert examiner for {domain}.
 Generate exactly ONE multiple choice question (MCQ) with 4 options.
@@ -1226,20 +1254,16 @@ IMPORTANT RULES:
 Previous questions asked (avoid repeating similar topics):
 {prev_context}
 
-FORMAT YOUR RESPONSE AS A VALID JSON OBJECT:
-{{
-  "question": "The question text",
-  "options": {{
-    "A": "Option A text",
-    "B": "Option B text",
-    "C": "Option C text",
-    "D": "Option D text"
-  }},
-  "correct_answer": "A",
-  "explanation": "Brief explanation of why the answer is correct"
-}}"""
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+QUESTION: [Your question here]
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+CORRECT: [A/B/C/D]
+EXPLANATION: [Brief explanation of why this is correct]"""
         
-        if not self.client:
+        if not self.llm:
             # Fallback MCQ questions
             question = f"What is the primary purpose of {domain}?"
             options = {
@@ -1252,36 +1276,51 @@ FORMAT YOUR RESPONSE AS A VALID JSON OBJECT:
             explanation = f"{domain} helps organize and structure code for better maintainability."
         else:
             try:
-                # Import json for parsing
-                import json
-                from google.genai import types
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=f"Generate a {difficulty} MCQ for {domain} ({purpose})")
+                ]
+                response = self.llm.invoke(messages)
+                mcq_text = response.content.strip()
                 
-                response = self.client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=f"{system_prompt}\n\nGenerate a {difficulty} MCQ for {domain} ({purpose})",
-                    config=types.GenerateContentConfig(response_mime_type="application/json")
-                )
+                # Parse the MCQ response
+                question = ""
+                options = {"A": "", "B": "", "C": "", "D": ""}
+                correct = "A"
+                explanation = ""
                 
-                # Parse the JSON response
-                try:
-                    quiz_data = json.loads(response.text.strip())
-                    question = quiz_data.get("question", "Error parsing question")
-                    options = quiz_data.get("options", {"A": "Error", "B": "Error", "C": "Error", "D": "Error"})
-                    correct = quiz_data.get("correct_answer", "A").upper()
-                    explanation = quiz_data.get("explanation", "No explanation provided.")
+                lines = mcq_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('QUESTION:'):
+                        question = line.split(':', 1)[1].strip()
+                    elif line.startswith('A)') or line.startswith('A.'):
+                        options["A"] = line[2:].strip()
+                    elif line.startswith('B)') or line.startswith('B.'):
+                        options["B"] = line[2:].strip()
+                    elif line.startswith('C)') or line.startswith('C.'):
+                        options["C"] = line[2:].strip()
+                    elif line.startswith('D)') or line.startswith('D.'):
+                        options["D"] = line[2:].strip()
+                    elif line.startswith('CORRECT:'):
+                        correct = line.split(':', 1)[1].strip().upper()
+                        if correct not in ["A", "B", "C", "D"]:
+                            correct = "A"
+                    elif line.startswith('EXPLANATION:'):
+                        explanation = line.split(':', 1)[1].strip()
+                
+                # Validate parsing
+                if not question or not all(options.values()):
+                    question = f"Which of the following best describes {domain}?"
+                    options = {
+                        "A": "A programming concept",
+                        "B": "A design pattern",
+                        "C": "A development methodology",
+                        "D": "All of the above"
+                    }
+                    correct = "D"
+                    explanation = f"{domain} encompasses multiple aspects of software development."
                     
-                    # Validate options
-                    if not isinstance(options, dict) or not all(k in options for k in ["A", "B", "C", "D"]):
-                        raise ValueError("Invalid options format")
-                        
-                except Exception as parse_error:
-                    print(f"JSON parsing error: {parse_error}")
-                    # Fallback parsing if JSON fails or is malformed
-                    question = "Error generating question. Please try 'next' again."
-                    options = {"A": "Retry", "B": "Retry", "C": "Retry", "D": "Retry"}
-                    correct = "A"
-                    explanation = "An error occurred during generation."
-
             except Exception as e:
                 print(f"Error generating MCQ: {e}")
                 question = f"What is {domain}?"
@@ -1302,8 +1341,6 @@ FORMAT YOUR RESPONSE AS A VALID JSON OBJECT:
         session["awaiting_answer"] = True
         session["questions_asked"] += 1
         
-        await self._save_session(session_id, session)
-        
         return f"""📝 **Question {session["questions_asked"]}** ({difficulty.title()})
 
 {question}
@@ -1318,9 +1355,9 @@ FORMAT YOUR RESPONSE AS A VALID JSON OBJECT:
     
     async def evaluate_answer(self, session_id: str, user_answer: str) -> str:
         """Evaluate user's MCQ answer"""
-        session = await self._get_session(session_id)
+        session = self._get_session(session_id)
         
-        if not session.get("current_question"):
+        if not session["current_question"]:
             return "No active question. Type **'next'** to get a new question."
         
         question = session["current_question"]
@@ -1342,14 +1379,12 @@ FORMAT YOUR RESPONSE AS A VALID JSON OBJECT:
         is_correct = user_choice == correct
         
         # Store in history
-        history = session.get("history", [])
-        history.append({
+        session["history"].append({
             "question": question,
             "answer": user_choice,
             "correct_answer": correct,
             "is_correct": is_correct
         })
-        session["history"] = history
         
         if is_correct:
             session["score"] += 1
@@ -1391,120 +1426,111 @@ Type **'next'** to continue to the next question or **'score'** to see your prog
             session["awaiting_answer"] = False
             session["current_question"] = None
         
-        await self._save_session(session_id, session)
         return result
     
-    async def get_score(self, session_id: str) -> str:
+    def get_score(self, session_id: str) -> str:
         """Get current score and progress"""
-        session = await self._get_session(session_id)
+        session = self._get_session(session_id)
         
-        if session.get("questions_asked", 0) == 0:
+        if session["questions_asked"] == 0:
             return "No questions answered yet. Start your session first!"
         
         correct = session["score"]
         total = session["questions_asked"]
         percentage = (correct / total) * 100 if total > 0 else 0
         
-        performance = "Excellent!" if percentage >= 90 else \
-                      "Great!" if percentage >= 75 else \
-                      "Good" if percentage >= 60 else \
-                      "Needs Improvement"
+        performance = "Excellent! 🌟" if percentage >= 90 else \
+                      "Great! 👏" if percentage >= 75 else \
+                      "Good 👍" if percentage >= 60 else \
+                      "Needs Improvement 📚"
         
-        return f"""## Your Progress
+        return f"""## 📈 Your Progress
 
-**Domain:** {session.get("domain")}
-**Purpose:** {session.get("purpose", "").title()}
-**Difficulty:** {session.get("difficulty", "").title()}
+**Domain:** {session["domain"]}
+**Purpose:** {session["purpose"].title()}
+**Difficulty:** {session["difficulty"].title()}
 
 ---
 
 | Metric | Value |
 |--------|-------|
 | Questions Answered | {total} |
-| Correct Answers | {correct} |
-| Wrong Answers | {total - correct} |
-| Accuracy | {int(percentage)}% |
+| Correct Answers | {correct} ✅ |
+| Wrong Answers | {total - correct} ❌ |
+| Accuracy | {percentage:.0f}% |
 | Performance | {performance} |
 
 ---
 Type **'next'** to continue or **'end'** to finish the session."""
     
-    async def end_session(self, session_id: str) -> str:
+    def end_session(self, session_id: str) -> str:
         """End the quiz session and show final results"""
-        session = await self._get_session(session_id)
+        session = self._get_session(session_id)
         
-        if session.get("questions_asked", 0) == 0:
+        if session["questions_asked"] == 0:
             return "No session to end. Start a new session to begin!"
         
-        correct = session.get("score", 0)
-        total = session.get("questions_asked", 0)
+        correct = session["score"]
+        total = session["questions_asked"]
         percentage = (correct / total) * 100 if total > 0 else 0
         
         # Performance grade based on percentage
         if percentage >= 90:
             grade = "A+"
             message = "Outstanding performance! You've demonstrated excellent mastery."
+            emoji = "🏆"
         elif percentage >= 80:
             grade = "A"
             message = "Excellent work! You have a strong understanding."
+            emoji = "🥇"
         elif percentage >= 70:
             grade = "B+"
             message = "Great job! You're well-prepared."
+            emoji = "🥈"
         elif percentage >= 60:
             grade = "B"
             message = "Good performance! Keep practicing to improve further."
+            emoji = "🥉"
         elif percentage >= 50:
             grade = "C"
             message = "Fair performance. More practice is recommended."
+            emoji = "📚"
         else:
             grade = "D"
             message = "You need more study. Review the topics and try again."
+            emoji = "📖"
         
-        result = f"""## Session Complete!
+        result = f"""## {emoji} Session Complete!
 
-### Final Results for {session.get("domain", "Unknown")}
+### Final Results for {session["domain"]}
 
 | Metric | Value |
 |--------|-------|
-| Purpose | {session.get("purpose", "").title()} |
-| Difficulty | {session.get("difficulty", "").title()} |
+| Purpose | {session["purpose"].title()} |
+| Difficulty | {session["difficulty"].title()} |
 | Questions Answered | {total} |
-| Correct Answers | {correct} |
-| Wrong Answers | {total - correct} |
-| Accuracy | {int(percentage)}% |
+| Correct Answers | {correct} ✅ |
+| Wrong Answers | {total - correct} ❌ |
+| Accuracy | {percentage:.0f}% |
 | **Grade** | **{grade}** |
 
 ---
 
-### Feedback
+### 📝 Feedback
 {message}
 
 ---
-*Start a new session anytime by selecting domain, purpose, and difficulty!*
-"""
+*Start a new session anytime by selecting domain, purpose, and difficulty!*"""
         
-        # Clear session (mark as inactive/reset in DB)
-        empty_data = {
-            "domain": None,
-            "purpose": None,
-            "difficulty": None,
-            "score": 0,
-            "questions_asked": 0,
-            "current_question": None,
-            "current_options": {},
-            "correct_answer": None,
-            "explanation": "",
-            "awaiting_answer": False,
-            "needs_retry": False,
-            "history": []
-        }
-        await self._save_session(session_id, empty_data)
+        # Clear session
+        if session_id in self.sessions:
+            del self.sessions[session_id]
         
         return result
     
     async def process_message(self, message: str, session_id: str) -> str:
         """Process user message and determine action"""
-        session = await self._get_session(session_id)
+        session = self._get_session(session_id)
         msg_lower = message.lower().strip()
         
         # Handle commands
@@ -1512,10 +1538,10 @@ Type **'next'** to continue or **'end'** to finish the session."""
             return await self.generate_question(session_id)
         
         elif msg_lower == "score":
-            return await self.get_score(session_id)
+            return self.get_score(session_id)
         
         elif msg_lower == "end" or msg_lower == "finish" or msg_lower == "quit":
-            return await self.end_session(session_id)
+            return self.end_session(session_id)
         
         elif msg_lower == "help":
             return """## 🆘 Quiz Commands
@@ -1556,15 +1582,15 @@ class MathSolverAgent:
     Advanced Math Problem Solver Agent with Multi-Agent Architecture.
     
     Flow:
-    User Input -> Math Classifier Agent -> Reasoning Agent (LLaMA) -> 
-    Tool Executor Agent (SymPy/NumPy) -> Solution Formatter Agent -> Final Answer
+    User Input → Math Classifier Agent → Reasoning Agent (LLaMA) → 
+    Tool Executor Agent (SymPy/NumPy) → Solution Formatter Agent → Final Answer
     
     Supports: Algebra, Calculus, Probability, Linear Algebra, Geometry, Trigonometry, Statistics
     """
     
     def __init__(self):
         self.name = "Math Problem Solver"
-        self.client = client
+        self.llm = llm
         self.graph = self._build_graph()
         
         # Initialize mathematical tools
@@ -1668,11 +1694,11 @@ class MathSolverAgent:
         problem = state["problem"]
         problem_type = state.get("problem_type", "General Mathematics")
         
-        if not self.client:
+        if not self.llm:
             return {
-                "steps": ["Gemini client not available"],
-                "final_answer": "Error: Cannot reason without Gemini",
-                "explanation": "Please ensure Google API Key is set."
+                "steps": ["LLM not available"],
+                "final_answer": "Error: Cannot reason without LLM",
+                "explanation": "Please ensure Ollama is running."
             }
         
         reasoning_prompt = f"""You are an expert {problem_type} specialist. Analyze this problem and create a detailed solution plan.
@@ -1688,11 +1714,12 @@ Provide:
 Be specific and mathematical. Output in plain text only."""
 
         try:
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"You are a math reasoning expert. Analyze problems and plan solutions.\n\n{reasoning_prompt}"
-            )
-            reasoning = response.text.strip()
+            messages = [
+                SystemMessage(content="You are a math reasoning expert. Analyze problems and plan solutions."),
+                HumanMessage(content=reasoning_prompt)
+            ]
+            response = self.llm.invoke(messages)
+            reasoning = response.content.strip()
             
             return {
                 "steps": [reasoning],
@@ -1862,7 +1889,7 @@ Be specific and mathematical. Output in plain text only."""
         tool_answer = state.get("final_answer")
         reasoning = state.get("explanation", "")
         
-        if not self.client:
+        if not self.llm:
             return state
         
         # Build context from tool results
@@ -1880,17 +1907,17 @@ Create a beautiful, well-formatted solution following this EXACT structure:
 
 ---
 
-**Problem**
+**📌 Problem**
 
 [Restate the problem clearly]
 
 ---
 
-**Problem Type:** {problem_type}
+**🔢 Problem Type:** {problem_type}
 
 ---
 
-**Solution**
+**📝 Solution**
 
 **Step 1:** [First step with explanation]
 
@@ -1900,13 +1927,13 @@ Create a beautiful, well-formatted solution following this EXACT structure:
 
 ---
 
-**Answer**
+**✅ Answer**
 
 [State the final answer clearly - use the verified calculation if provided]
 
 ---
 
-**Method Used**
+**💡 Method Used**
 
 [Brief explanation of the approach]
 
@@ -1921,11 +1948,12 @@ RULES:
 - If a verified calculation was provided, USE THAT as the answer"""
 
         try:
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"You are a math solution formatter. Create clean, well-structured solutions.\n\n{formatter_prompt}"
-            )
-            formatted = response.text.strip()
+            messages = [
+                SystemMessage(content="You are a math solution formatter. Create clean, well-structured solutions."),
+                HumanMessage(content=formatter_prompt)
+            ]
+            response = self.llm.invoke(messages)
+            formatted = response.content.strip()
             
             return {
                 "explanation": formatted,
@@ -1953,8 +1981,8 @@ RULES:
     
     async def solve_stream(self, problem: str, session_id: str = "default"):
         """Solve a math problem with streaming response"""
-        if not self.client:
-            yield "Error: Gemini client not initialized. Please ensure Google API Key is set."
+        if not self.llm:
+            yield "Error: LLM not initialized. Please ensure Ollama is running."
             return
         
         # Get conversation history for context
@@ -1963,7 +1991,7 @@ RULES:
         print(f"[Math Memory] Session: {session_id}, History: {len(history_messages)} messages")
         
         # AGENT 1: Classify the problem
-        yield "**Analyzing problem type...**\n\n"
+        yield "🔍 **Analyzing problem type...**\n\n"
         
         problem_lower = problem.lower()
         problem_type = "General Mathematics"
@@ -1983,19 +2011,19 @@ RULES:
                 problem_type = category
                 break
         
-        yield f"**Problem Type:** {problem_type}\n\n"
+        yield f"📐 **Problem Type:** {problem_type}\n\n"
         
         # AGENT 3: Try tool execution first
         tool_result = None
         if self.sympy_available:
             tool_result = self._try_sympy_solve(problem, problem_type)
             if tool_result:
-                yield f"**Tool Verification:** SymPy calculated -> `{tool_result}`\n\n"
+                yield f"🔧 **Tool Verification:** SymPy calculated → `{tool_result}`\n\n"
         
         if tool_result is None and self.numpy_available:
             tool_result = self._try_numpy_solve(problem, problem_type)
             if tool_result:
-                yield f"**Tool Verification:** NumPy calculated -> `{tool_result}`\n\n"
+                yield f"🔧 **Tool Verification:** NumPy calculated → `{tool_result}`\n\n"
         
         yield "---\n\n"
         
@@ -2009,13 +2037,13 @@ PROBLEM: {problem}
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
-**Problem**
+**📌 Problem**
 
 [Restate the problem]
 
 ---
 
-**Solution**
+**📝 Solution**
 
 **Step 1:** [Explanation and work]
 
@@ -2025,13 +2053,13 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ---
 
-**Answer**
+**✅ Answer**
 
 [Final answer - {"use the VERIFIED ANSWER: " + str(tool_result) if tool_result else "calculate carefully"}]
 
 ---
 
-**Key Concept**
+**💡 Key Concept**
 
 [Brief explanation]
 
@@ -2057,14 +2085,10 @@ IMPORTANT RULES:
         
         full_response = ""
         try:
-            response = self.client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=f"You are an expert math tutor. Solve problems step-by-step in clean plain text.\n\n{solve_prompt}"
-            )
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield chunk.text
+            async for chunk in self.llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    full_response += chunk.content
+                    yield chunk.content
             
             # Save context for history
             if full_response:
@@ -2079,9 +2103,11 @@ IMPORTANT RULES:
         Solve a math problem from an image using base64 encoding.
         Sends the image directly to the vision-capable LLM (llava).
         """
-        # Use Gemini for image processing (it supports vision)
-        if not self.client:
-            yield "Error: Gemini client not initialized."
+        # Use the vision LLM (llava) for image processing
+        global vision_llm
+        
+        if not vision_llm:
+            yield "Error: Vision LLM (llava) not initialized. Please run: ollama pull llava"
             return
         
         # Get conversation history
@@ -2099,17 +2125,17 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ---
 
-**Problem from Image**
+**📷 Problem from Image**
 
 [Write out the exact problem you see in the image]
 
 ---
 
-**Problem Type:** [Category]
+**📌 Problem Type:** [Category]
 
 ---
 
-**Solution**
+**📝 Solution**
 
 **Step 1:** [Explanation and calculation]
 
@@ -2119,13 +2145,13 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ---
 
-**Answer**
+**✅ Answer**
 
 [Clear final answer]
 
 ---
 
-**Key Concept**
+**💡 Key Concept**
 
 [Brief explanation of the method used]
 
@@ -2140,30 +2166,35 @@ IMPORTANT RULES:
 - First describe what you see in the image before solving"""
 
         try:
-            # Create content with text and image for Gemini
-            from google import genai
-            from google.genai import types
+            # Create message with image for vision model
+            from langchain_core.messages import HumanMessage as HM
             
-            # Decode base64 image
-            import base64
-            image_bytes = base64.b64decode(image_base64)
+            messages = [
+                SystemMessage(content="You are an expert math tutor with vision capabilities. Analyze math problem images and solve them step-by-step.")
+            ]
             
-            # Create content with text and image
-            # Note: Gemini 2.0 Flash supports interleaved text and image
+            # Add conversation history
+            for hist_msg in history_messages:
+                messages.append(hist_msg)
             
-            response = self.client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=[
-                    vision_prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+            # Add the image message with base64 data
+            image_message = HM(
+                content=[
+                    {"type": "text", "text": vision_prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"}
+                    }
                 ]
             )
+            messages.append(image_message)
             
             full_response = ""
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield chunk.text
+            # Use vision_llm (llava) for image processing
+            async for chunk in vision_llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    full_response += chunk.content
+                    yield chunk.content
             
             # Save context for history
             if full_response:
@@ -2175,11 +2206,11 @@ IMPORTANT RULES:
             yield f"""
 ---
 
-**Vision Processing Note**
+**⚠️ Vision Processing Note**
 
 Unable to process the image directly. Error: {str(e)}
 
-**Suggestions:**
+**💡 Suggestions:**
 - Make sure you're using a vision-capable model (e.g., llama3.2-vision, llava)
 - Try typing the problem manually instead
 - Ensure the image is clear and readable
@@ -2199,7 +2230,7 @@ class JobSearchAgent:
     def __init__(self):
         self.name = "Job Search"
         self.tavily = tavily_client
-        # self.llm = llm # Not used for job search
+        self.llm = llm
         
         # Conversation history per session
         self.session_histories: Dict[str, ChatMessageHistory] = {}
@@ -2350,11 +2381,11 @@ class JobSearchAgent:
         formatted = f"""
 ### {index}. {title}
 
-**Source:** {source}
+📍 **Source:** {source}
 
-{content}
+📝 {content}
 
-[**Apply Now**]({url})
+🔗 [**Apply Now**]({url})
 
 ---
 """
@@ -2492,6 +2523,781 @@ Remember: You can see the previous job listings in the conversation history - us
             self.save_context(session_id, f"Search for: {query}" + (f" in {location}" if location else ""), result)
 
 
+class CodeAssistantAgent:
+    """
+    Code Assistant Agent using LangGraph.
+
+    Architecture (from diagram):
+      User → Generate Code (Gemini + CodeSolution schema)
+           → Execute & Reflect
+           → [attempt_count > MAX or error = None] → return to user
+                                                   → [else] loop back to Generate Code
+
+    Uses GOOGLE_API_KEY and GEMINI_MODEL from environment — no hardcoded values.
+    """
+
+    def __init__(self):
+        self.name = "Code Assistant"
+        # ---- Read config from environment (no hardcodes) ----
+        from app.core.config import settings
+        api_key = settings.GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY")
+        model_name = settings.GEMINI_MODEL
+        self.max_attempts: int = settings.CODE_ASSISTANT_MAX_ATTEMPTS
+
+        self.gemini_llm = None
+        self.structured_llm = None
+
+        if api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self.gemini_llm = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=api_key,
+                    temperature=0.2,
+                )
+                self.structured_llm = self.gemini_llm.with_structured_output(CodeSolution)
+                print(f"Code Assistant: Gemini ({model_name}) initialized")
+            except Exception as e:
+                print(f"Code Assistant: Gemini init failed — {e}")
+        else:
+            print("Code Assistant: GOOGLE_API_KEY not set, will use fallback")
+
+        self.graph = self._build_graph()
+
+    # ------------------------------------------------------------------
+    # Graph construction
+    # ------------------------------------------------------------------
+
+    def _build_graph(self):
+        """Build LangGraph: generate_code → execute_and_reflect (with feedback loop)"""
+        workflow = StateGraph(CodeAssistantState)
+
+        workflow.add_node("generate_code", self._generate_code)
+        workflow.add_node("execute_and_reflect", self._execute_and_reflect)
+
+        workflow.set_entry_point("generate_code")
+        workflow.add_edge("generate_code", "execute_and_reflect")
+        workflow.add_conditional_edges(
+            "execute_and_reflect",
+            self._route_after_reflect,
+            {"regenerate": "generate_code", "finish": END},
+        )
+
+        return workflow.compile()
+
+    def _route_after_reflect(self, state: CodeAssistantState) -> str:
+        """Routing: finish if no error OR max attempts reached, else regenerate."""
+        if state["error"] is None:
+            return "finish"
+        if state["attempt_count"] >= state["max_attempts"]:
+            return "finish"
+        return "regenerate"
+
+    # ------------------------------------------------------------------
+    # Node: Generate Code
+    # ------------------------------------------------------------------
+
+    def _generate_code(self, state: CodeAssistantState) -> dict:
+        """
+        Generate Code node.
+        On first attempt: plain generation.
+        On subsequent attempts: includes error feedback for self-correction.
+        """
+        attempt = state.get("attempt_count", 0)
+        problem = state["problem"]
+        prev_error = state.get("error")
+        prev_solution: Optional[CodeSolution] = state.get("solution")
+
+        if not self.structured_llm:
+            # Fallback when Gemini is unavailable
+            fallback = CodeSolution(
+                prefix="LLM unavailable — here is a starter template.",
+                imports="# Add your imports here",
+                code=f"# TODO: Implement solution for:\n# {problem}\n\npass",
+            )
+            return {"solution": fallback, "attempt_count": attempt + 1, "error": None}
+
+        system_prompt = (
+            "You are an expert Python programmer.\n"
+            "Return EXACTLY three fields:\n"
+            "  prefix  — a brief description of your approach\n"
+            "  imports — all import statements (empty string if none needed)\n"
+            "  code    — the complete solution code WITHOUT the import lines"
+        )
+
+        if prev_error and prev_solution and attempt > 0:
+            prev_full = ""
+            if prev_solution.imports.strip():
+                prev_full += prev_solution.imports.strip() + "\n\n"
+            prev_full += prev_solution.code.strip()
+            user_prompt = (
+                f"The following Python code raised an error.\n\n"
+                f"Original problem:\n{problem}\n\n"
+                f"Previous code:\n```python\n{prev_full}\n```\n\n"
+                f"Error:\n{prev_error}\n\n"
+                f"Fix the code and return a corrected solution."
+            )
+        else:
+            user_prompt = (
+                f"Solve the following Python coding problem:\n\n"
+                f"{problem}\n\n"
+                f"Write clean, well-commented, working Python code."
+            )
+
+        try:
+            solution: CodeSolution = self.structured_llm.invoke(
+                [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+            )
+            print(f"[Code Assistant] Generated code (attempt {attempt + 1})")
+            return {"solution": solution, "attempt_count": attempt + 1, "error": None}
+        except Exception as e:
+            print(f"[Code Assistant] Generation error: {e}")
+            fallback = CodeSolution(
+                prefix=f"Generation error: {str(e)}",
+                imports="",
+                code=f"# Could not generate solution\n# {str(e)}",
+            )
+            return {"solution": fallback, "attempt_count": attempt + 1}
+
+    # ------------------------------------------------------------------
+    # Node: Execute & Reflect
+    # ------------------------------------------------------------------
+
+    def _execute_and_reflect(self, state: CodeAssistantState) -> dict:
+        """
+        Execute & Reflect node.
+        Runs the generated code in an isolated exec scope.
+        Returns error=None on success, or the error message for the feedback loop.
+        """
+        solution: Optional[CodeSolution] = state.get("solution")
+        if not solution:
+            return {"error": "No solution generated", "final_response": None}
+
+        # Assemble full code
+        full_code = ""
+        if solution.imports and solution.imports.strip():
+            full_code += solution.imports.strip() + "\n\n"
+        full_code += solution.code.strip()
+
+        try:
+            exec_globals: dict = {}
+            exec(compile(full_code, "<code_assistant>", "exec"), exec_globals)  # noqa: S102
+            print(f"[Code Assistant] Code executed successfully (attempt {state['attempt_count']})")
+            return {
+                "error": None,
+                "final_response": self._format_response(solution, None, state["attempt_count"]),
+            }
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            print(f"[Code Assistant] Execution error: {error_msg}")
+            return {
+                "error": error_msg,
+                "final_response": self._format_response(solution, error_msg, state["attempt_count"]),
+            }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _format_response(self, solution: CodeSolution, error: Optional[str], attempts: int) -> str:
+        """Format the final Markdown response shown to the user."""
+        attempt_note = (
+            f" *(self-corrected in {attempts} attempt{'s' if attempts > 1 else ''})*"
+            if attempts > 1
+            else ""
+        )
+
+        parts = [f"## 💡 Approach{attempt_note}\n{solution.prefix}\n"]
+
+        full_code = ""
+        if solution.imports and solution.imports.strip():
+            full_code += solution.imports.strip() + "\n"
+        if solution.code and solution.code.strip():
+            if full_code:
+                full_code += "\n"
+            full_code += solution.code.strip()
+
+        if full_code:
+            parts.append(f"## 🐍 Solution\n```python\n{full_code}\n```\n")
+
+        if error:
+            parts.append(
+                f"## ⚠️ Note\nReached max retry limit (`{self.max_attempts}` attempts). "
+                f"Last error: `{error}`\n\nYou may need to adjust imports or environment."
+            )
+        else:
+            parts.append("## ✅ Status\nCode verified — executes without errors.")
+
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def solve(self, problem: str) -> str:
+        """Solve a coding problem (non-streaming). Returns formatted Markdown."""
+        initial_state: CodeAssistantState = {
+            "messages": [HumanMessage(content=problem)],
+            "problem": problem,
+            "solution": None,
+            "error": None,
+            "attempt_count": 0,
+            "max_attempts": self.max_attempts,
+            "final_response": None,
+        }
+        result = await self.graph.ainvoke(initial_state)
+        return result.get("final_response") or "Could not generate a solution."
+
+    async def solve_stream(self, problem: str):
+        """
+        Solve a coding problem with real-time streaming progress.
+        Follows the diagram loop:
+          generate → execute & reflect → (loop if error) → stream result
+        """
+        max_a = self.max_attempts
+        attempt = 0
+        error: Optional[str] = None
+        solution: Optional[CodeSolution] = None
+
+        yield "🔍 **Analyzing your problem...**\n\n"
+        await asyncio.sleep(0)
+
+        while attempt < max_a:
+            attempt += 1
+            if attempt == 1:
+                yield "⚙️ **Generating code solution...**\n\n"
+            else:
+                yield f"🔄 **Error found — reflecting and regenerating (attempt {attempt}/{max_a})...**\n\n"
+            await asyncio.sleep(0)
+
+            # ---- Generate Code node ----
+            gen_state: CodeAssistantState = {
+                "messages": [HumanMessage(content=problem)],
+                "problem": problem,
+                "solution": solution,
+                "error": error,
+                "attempt_count": attempt - 1,
+                "max_attempts": max_a,
+                "final_response": None,
+            }
+            gen_result = self._generate_code(gen_state)
+            solution = gen_result.get("solution")
+
+            if not solution:
+                yield "❌ **Failed to generate a solution.**\n"
+                return
+
+            yield "▶️ **Testing the code...**\n\n"
+            await asyncio.sleep(0)
+
+            # ---- Execute & Reflect node ----
+            exec_state = {**gen_state, **gen_result, "attempt_count": attempt}
+            exec_result = self._execute_and_reflect(exec_state)
+            error = exec_result.get("error")
+
+            if error is None:
+                break  # success
+
+            if attempt < max_a:
+                yield f"⚠️ **Error detected:** `{error}`\n\n"
+                await asyncio.sleep(0)
+
+        # Stream the final formatted response
+        final = self._format_response(solution, error, attempt)
+        chunk_size = 150
+        for i in range(0, len(final), chunk_size):
+            yield final[i : i + chunk_size]
+            await asyncio.sleep(0)
+
+
+class DeepSearchAgent:
+    """
+    Deep Search & Report Generator Agent using LangGraph.
+
+    Architecture (from diagram):
+      INPUT (topic)
+        ↓
+      Report Planner (Gemini + Web Search Tool)
+        → Report Template with custom sections
+        ↓
+      [Parallel] Section Writer loop for each section:
+          Researcher (Gemini) ←→ Web Search Tool   →  Section Writer (Gemini)
+        ↓
+      Format Sections
+        ↓
+      [Parallel] Final Section Writer (Gemini) for each section
+        ↓
+      Compile Final Report  →  Final Report
+
+    Uses GOOGLE_API_KEY, GEMINI_MODEL, TAVILY_API_KEY, DEEP_SEARCH_* from settings.
+    """
+
+    def __init__(self):
+        self.name = "Deep Search & Report Generator"
+
+        from app.core.config import settings
+        api_key     = settings.GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY")
+        model_name  = settings.GEMINI_MODEL
+        tavily_key  = settings.TAVILY_API_KEY or os.environ.get("TAVILY_API_KEY", "")
+        self.max_sections    = settings.DEEP_SEARCH_MAX_SECTIONS
+        self.search_depth    = settings.DEEP_SEARCH_SEARCH_DEPTH
+
+        # Gemini LLM (general)
+        self.gemini = None
+        # Gemini LLM with structured output for planning
+        self.planner_llm = None
+
+        if api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self.gemini = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=api_key,
+                    temperature=0.4,
+                )
+                self.planner_llm = self.gemini.with_structured_output(ReportPlan)
+                print(f"Deep Search Agent: Gemini ({model_name}) initialized")
+            except Exception as e:
+                print(f"Deep Search Agent: Gemini init failed — {e}")
+        else:
+            print("Deep Search Agent: GOOGLE_API_KEY not set")
+
+        # Tavily web search
+        self.tavily = None
+        if tavily_key:
+            try:
+                self.tavily = TavilyClient(api_key=tavily_key)
+                print("Deep Search Agent: Tavily initialized")
+            except Exception as e:
+                print(f"Deep Search Agent: Tavily init failed — {e}")
+
+        self.graph = self._build_graph()
+
+    # ------------------------------------------------------------------
+    # LangGraph construction
+    # ------------------------------------------------------------------
+
+    def _build_graph(self):
+        """
+        Flow: plan_report → write_all_sections → format_sections
+              → refine_all_sections → compile_report → END
+        """
+        wf = StateGraph(DeepSearchState)
+        wf.add_node("plan_report",          self._plan_report)
+        wf.add_node("write_all_sections",   self._write_all_sections_sync)
+        wf.add_node("format_sections",      self._format_sections)
+        wf.add_node("refine_all_sections",  self._refine_all_sections_sync)
+        wf.add_node("compile_report",       self._compile_report)
+
+        wf.set_entry_point("plan_report")
+        wf.add_edge("plan_report",         "write_all_sections")
+        wf.add_edge("write_all_sections",  "format_sections")
+        wf.add_edge("format_sections",     "refine_all_sections")
+        wf.add_edge("refine_all_sections", "compile_report")
+        wf.add_edge("compile_report",       END)
+        return wf.compile()
+
+    # ------------------------------------------------------------------
+    # Node helper: web search (wraps sync Tavily in thread)
+    # ------------------------------------------------------------------
+
+    async def _web_search(self, query: str, max_results: int = 5) -> str:
+        """Run a Tavily search and return concatenated content snippets."""
+        if not self.tavily:
+            return f"[Web search unavailable — no Tavily key configured for query: {query}]"
+        try:
+            results = await asyncio.to_thread(
+                self.tavily.search,
+                query=query,
+                search_depth=self.search_depth,
+                max_results=max_results,
+            )
+            snippets = []
+            for r in results.get("results", []):
+                title   = r.get("title", "")
+                url     = r.get("url", "")
+                content = r.get("content", "")[:800]
+                snippets.append(f"**{title}** ({url})\n{content}")
+            return "\n\n---\n\n".join(snippets) if snippets else "No results found."
+        except Exception as e:
+            return f"[Search error: {e}]"
+
+    # ------------------------------------------------------------------
+    # Node 1: Report Planner (Gemini structured output + Tavily context)
+    # ------------------------------------------------------------------
+
+    def _plan_report(self, state: DeepSearchState) -> dict:
+        """
+        Report Planner node.
+        Uses Gemini with structured output (ReportPlan) + a Tavily overview search.
+        """
+        topic = state["topic"]
+        if not self.planner_llm:
+            fallback_plan = ReportPlan(
+                report_title=f"Report on {topic}",
+                sections=[
+                    ReportSection(title="Introduction",   description=f"Overview of {topic}"),
+                    ReportSection(title="Key Concepts",   description=f"Core concepts of {topic}"),
+                    ReportSection(title="Current Trends", description=f"Latest developments in {topic}"),
+                    ReportSection(title="Conclusion",     description=f"Summary and future outlook for {topic}"),
+                ]
+            )
+            return {"report_plan": fallback_plan}
+
+        system_prompt = (
+            "You are an expert report planner. Given a topic, produce a detailed report plan.\n"
+            f"Rules:\n"
+            f"  - First section MUST be titled 'Introduction'\n"
+            f"  - Last section MUST be titled 'Conclusion'\n"
+            f"  - Include {self.max_sections} substantive body sections between them\n"
+            f"  - Each section description must specify exactly what to research and write\n"
+            f"  - Sections must be logically ordered and non-overlapping\n"
+        )
+        user_prompt = f"Create a comprehensive report plan for the topic: **{topic}**"
+
+        try:
+            plan: ReportPlan = self.planner_llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ])
+            print(f"[Deep Search] Report plan: {[s.title for s in plan.sections]}")
+            return {"report_plan": plan}
+        except Exception as e:
+            print(f"[Deep Search] Planner error: {e}")
+            fallback_plan = ReportPlan(
+                report_title=f"Report on {topic}",
+                sections=[
+                    ReportSection(title="Introduction",   description=f"Overview of {topic}"),
+                    ReportSection(title="Key Concepts",   description=f"Core aspects of {topic}"),
+                    ReportSection(title="Analysis",       description=f"In-depth analysis of {topic}"),
+                    ReportSection(title="Applications",   description=f"Real-world applications of {topic}"),
+                    ReportSection(title="Future Outlook", description=f"Future trends and developments in {topic}"),
+                    ReportSection(title="Conclusion",     description=f"Summary and takeaways for {topic}"),
+                ]
+            )
+            return {"report_plan": fallback_plan}
+
+    # ------------------------------------------------------------------
+    # Node 2: Parallel Section Writers (Researcher + Writer per section)
+    # ------------------------------------------------------------------
+
+    async def _research_section(self, section: ReportSection, topic: str) -> str:
+        """
+        Researcher node: Generate 2 search queries with Gemini,
+        execute them with Tavily, return combined research notes.
+        """
+        if not self.gemini:
+            return f"[Research unavailable for: {section.title}]"
+
+        # Step A: Generate targeted search queries
+        query_prompt = (
+            f"You are a research assistant generating web search queries.\n"
+            f"Report topic: {topic}\n"
+            f"Section: {section.title} — {section.description}\n\n"
+            f"Generate exactly 2 precise, distinct search queries to find high-quality "
+            f"information for this section. Return ONLY the queries, one per line."
+        )
+        try:
+            resp = await self.gemini.ainvoke([HumanMessage(content=query_prompt)])
+            queries = [q.strip() for q in resp.content.strip().split("\n") if q.strip()][:2]
+        except Exception as e:
+            queries = [f"{topic} {section.title}", f"{topic} {section.description[:60]}"]
+
+        # Step B: Search web for each query
+        search_tasks = [self._web_search(q, max_results=4) for q in queries]
+        results = await asyncio.gather(*search_tasks)
+        combined = f"## Research for: {section.title}\n\n"
+        for q, r in zip(queries, results):
+            combined += f"**Query:** {q}\n\n{r}\n\n---\n\n"
+        return combined
+
+    async def _write_section(
+        self, section: ReportSection, research: str, topic: str
+    ) -> str:
+        """
+        Section Writer node: Uses Gemini to write a polished section draft
+        based on the research gathered by the Researcher.
+        """
+        if not self.gemini:
+            return f"## {section.title}\n\n[Section writer unavailable]"
+
+        system_prompt = (
+            "You are an expert report writer. Write a well-structured, informative section "
+            "for a professional report. Use markdown formatting with headers, bullet points, "
+            "and bold text where appropriate. Cite sources inline when available.\n"
+            "Target length: 300–500 words per section."
+        )
+        user_prompt = (
+            f"Report topic: **{topic}**\n"
+            f"Section to write: **{section.title}**\n"
+            f"Section purpose: {section.description}\n\n"
+            f"Research material:\n{research}\n\n"
+            f"Write a comprehensive, well-cited section draft."
+        )
+        try:
+            resp = await self.gemini.ainvoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ])
+            return f"## {section.title}\n\n{resp.content.strip()}"
+        except Exception as e:
+            return f"## {section.title}\n\n[Writing error: {e}]"
+
+    async def _research_and_write_section(
+        self, section: ReportSection, topic: str
+    ) -> tuple:
+        """Combined Researcher + Section Writer pipeline for one section."""
+        research = await self._research_section(section, topic)
+        draft    = await self._write_section(section, research, topic)
+        return section.title, research, draft
+
+    def _write_all_sections_sync(self, state: DeepSearchState) -> dict:
+        """Wrapper so LangGraph sync graph can call the async parallel writer."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already inside a running event loop (e.g. called from ainvoke) —
+            # use nest_asyncio or a thread executor so we don't block.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, self._write_all_sections(state))
+                return future.result()
+        else:
+            return asyncio.run(self._write_all_sections(state))
+
+    async def _write_all_sections(self, state: DeepSearchState) -> dict:
+        """
+        Parallel Execution of Section Writers:
+        All sections are researched and written concurrently via asyncio.gather.
+        """
+        plan: ReportPlan = state["report_plan"]
+        topic = state["topic"]
+        if not plan:
+            return {"section_research": {}, "section_drafts": {}}
+
+        tasks = [self._research_and_write_section(s, topic) for s in plan.sections]
+        results = await asyncio.gather(*tasks)
+
+        section_research = {title: research for title, research, _ in results}
+        section_drafts   = {title: draft    for title, _,        draft in results}
+        print(f"[Deep Search] Wrote {len(section_drafts)} section drafts in parallel")
+        return {"section_research": section_research, "section_drafts": section_drafts}
+
+    # ------------------------------------------------------------------
+    # Node 3: Format sections (ordering)
+    # ------------------------------------------------------------------
+
+    def _format_sections(self, state: DeepSearchState) -> dict:
+        """Reorder drafts to match the plan order."""
+        plan: ReportPlan = state["report_plan"]
+        drafts = state.get("section_drafts") or {}
+        if not plan:
+            return {}
+        ordered = {s.title: drafts.get(s.title, f"## {s.title}\n\n[Not generated]")
+                   for s in plan.sections}
+        return {"section_drafts": ordered}
+
+    # ------------------------------------------------------------------
+    # Node 4: Parallel Final Section Writers
+    # ------------------------------------------------------------------
+
+    async def _refine_section(
+        self, title: str, draft: str, topic: str, all_drafts: str
+    ) -> tuple:
+        """
+        Final Section Writer: Polishes one draft with awareness of the full report context.
+        """
+        if not self.gemini:
+            return title, draft
+
+        system_prompt = (
+            "You are a senior editor refining a section of a professional report. "
+            "Improve clarity, flow, precision and depth. Ensure consistency with the "
+            "rest of the report. Keep markdown formatting. Do NOT shorten significantly."
+        )
+        user_prompt = (
+            f"Report topic: **{topic}**\n\n"
+            f"Full report draft (for context):\n{all_drafts[:3000]}...\n\n"
+            f"Section to refine: **{title}**\n\n{draft}\n\n"
+            f"Return ONLY the refined section text (keep the ## {title} header)."
+        )
+        try:
+            resp = await self.gemini.ainvoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ])
+            return title, resp.content.strip()
+        except Exception as e:
+            return title, draft  # return original on error
+
+    def _refine_all_sections_sync(self, state: DeepSearchState) -> dict:
+        """Wrapper so LangGraph sync graph can call the async parallel refiner."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, self._refine_all_sections(state))
+                return future.result()
+        else:
+            return asyncio.run(self._refine_all_sections(state))
+
+    async def _refine_all_sections(self, state: DeepSearchState) -> dict:
+        """
+        Parallel Execution of Final Section Writers.
+        All sections are refined concurrently.
+        """
+        plan: ReportPlan = state["report_plan"]
+        drafts = state.get("section_drafts") or {}
+        topic  = state["topic"]
+        if not plan:
+            return {"section_finals": drafts}
+
+        all_drafts_text = "\n\n".join(drafts.values())
+        tasks = [
+            self._refine_section(s.title, drafts.get(s.title, ""), topic, all_drafts_text)
+            for s in plan.sections
+        ]
+        results = await asyncio.gather(*tasks)
+        section_finals = {title: refined for title, refined in results}
+        print(f"[Deep Search] Refined {len(section_finals)} sections in parallel")
+        return {"section_finals": section_finals}
+
+    # ------------------------------------------------------------------
+    # Node 5: Compile Final Report
+    # ------------------------------------------------------------------
+
+    def _compile_report(self, state: DeepSearchState) -> dict:
+        """
+        Compile Final Report node.
+        Assembles Introduction + Sections + Conclusion into one document.
+        """
+        plan: ReportPlan = state["report_plan"]
+        finals = state.get("section_finals") or state.get("section_drafts") or {}
+        topic  = state["topic"]
+
+        title = plan.report_title if plan else f"Report on {topic}"
+        header = (
+            f"# {title}\n\n"
+            f"*Generated by Deep Search & Report Generator · {topic}*\n\n"
+            f"---\n\n"
+        )
+        body_parts = []
+        if plan:
+            for section in plan.sections:
+                body_parts.append(finals.get(section.title, f"## {section.title}\n\n[Not generated]"))
+        else:
+            body_parts = list(finals.values())
+
+        final_report = header + "\n\n".join(body_parts)
+        print(f"[Deep Search] Final report compiled ({len(final_report)} chars)")
+        return {"final_report": final_report}
+
+    # ------------------------------------------------------------------
+    # Public API — non-streaming
+    # ------------------------------------------------------------------
+
+    async def generate(self, topic: str) -> str:
+        """Generate a full report (non-streaming). Returns markdown string."""
+        initial_state: DeepSearchState = {
+            "messages":        [HumanMessage(content=topic)],
+            "topic":           topic,
+            "report_plan":     None,
+            "section_research": None,
+            "section_drafts":  None,
+            "section_finals":  None,
+            "final_report":    None,
+        }
+        result = await self.graph.ainvoke(initial_state)
+        return result.get("final_report") or "Could not generate report."
+
+    # ------------------------------------------------------------------
+    # Public API — streaming (yields progress + final report)
+    # ------------------------------------------------------------------
+
+    async def generate_stream(self, topic: str):
+        """
+        Stream the full report generation with real-time progress updates.
+
+        Follows the diagram:
+          plan → [parallel] research+write → format → [parallel] refine → compile
+        """
+        yield f"🔍 **Starting Deep Search on:** {topic}\n\n"
+        await asyncio.sleep(0)
+
+        # ── Step 1: Report Planner ──────────────────────────────────────
+        yield "📋 **Step 1/4 — Report Planner:** Designing report structure with web context...\n\n"
+        await asyncio.sleep(0)
+
+        state: DeepSearchState = {
+            "messages":         [HumanMessage(content=topic)],
+            "topic":            topic,
+            "report_plan":      None,
+            "section_research": None,
+            "section_drafts":   None,
+            "section_finals":   None,
+            "final_report":     None,
+        }
+
+        plan_result = self._plan_report(state)
+        state = {**state, **plan_result}
+        plan: ReportPlan = state["report_plan"]
+
+        if plan:
+            section_list = "\n".join(f"  {i+1}. **{s.title}** — {s.description}" for i, s in enumerate(plan.sections))
+            yield f"📑 **Report Plan — *{plan.report_title}***\n\n{section_list}\n\n"
+        else:
+            yield "⚠️ Could not plan report — using default structure.\n\n"
+        await asyncio.sleep(0)
+
+        # ── Step 2: Parallel Section Writers (Researcher + Writer) ──────
+        n = len(plan.sections) if plan else 0
+        yield f"🔎 **Step 2/4 — Section Writers:** Researching & writing {n} sections in parallel...\n\n"
+        await asyncio.sleep(0)
+
+        write_result = await self._write_all_sections(state)
+        state = {**state, **write_result}
+
+        drafts: Dict[str, str] = state.get("section_drafts") or {}
+        yield f"✍️ **{len(drafts)} sections drafted.**\n\n"
+        await asyncio.sleep(0)
+
+        # ── Step 3: Format Sections ─────────────────────────────────────
+        format_result = self._format_sections(state)
+        state = {**state, **format_result}
+
+        # ── Step 4: Parallel Final Section Writers ──────────────────────
+        yield f"✨ **Step 3/4 — Final Section Writers:** Refining all sections in parallel...\n\n"
+        await asyncio.sleep(0)
+
+        refine_result = await self._refine_all_sections(state)
+        state = {**state, **refine_result}
+        yield f"✅ **All sections refined.**\n\n"
+        await asyncio.sleep(0)
+
+        # ── Step 5: Compile Final Report ────────────────────────────────
+        yield "📄 **Step 4/4 — Compiling Final Report...**\n\n"
+        await asyncio.sleep(0)
+
+        compile_result = self._compile_report(state)
+        state = {**state, **compile_result}
+
+        final_report: str = state.get("final_report") or "Could not generate report."
+
+        yield "---\n\n"
+        # Stream the final report in chunks
+        chunk_size = 200
+        for i in range(0, len(final_report), chunk_size):
+            yield final_report[i: i + chunk_size]
+            await asyncio.sleep(0)
+
+
 # Create singleton instances
 roadmap_agent = RoadmapAgent()
 resources_agent = ResourcesAgent()
@@ -2499,3 +3305,5 @@ summarizer_agent = SummarizerAgent()
 quiz_agent = QuizAgent()
 math_solver_agent = MathSolverAgent()
 job_search_agent = JobSearchAgent()
+code_assistant_agent = CodeAssistantAgent()
+deep_search_agent = DeepSearchAgent()

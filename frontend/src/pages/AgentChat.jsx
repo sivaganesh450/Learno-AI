@@ -53,6 +53,22 @@ const agentConfig = {
     description: 'Search for recent job listings worldwide',
     placeholder: 'Search jobs (e.g., "python developer in London" or "data scientist in New York")',
     welcomeMessage: "Welcome to Job Search! 💼\n\nI'll help you find recent job listings from around the world using Adzuna.\n\n**How to search:**\n- Type a job title: `software engineer`\n- Add location: `software engineer in London`\n- Specify country: `data analyst in Sydney, Australia`\n\n**Supported countries:**\n🇬🇧 UK | 🇺🇸 USA | 🇦🇺 Australia | 🇨🇦 Canada | 🇩🇪 Germany | 🇫🇷 France | 🇮🇳 India | 🇸🇬 Singapore | and more!\n\nStart by typing a job title or role you're looking for!"
+  },
+  code_assistant: {
+    name: 'Code Assistant',
+    icon: '👨‍💻',
+    color: '#00897b',
+    description: 'AI-powered code generation with automatic error correction',
+    placeholder: 'Describe your coding problem (e.g., "Write a function to find all prime numbers up to n")',
+    welcomeMessage: "Welcome to Code Assistant! 👨‍💻\n\nI use an intelligent **Generate → Execute & Reflect** loop powered by Gemini:\n\n1. 🔍 **Analyze** your problem\n2. ⚙️ **Generate** structured code (approach + imports + solution)\n3. ▶️ **Execute** and test the code automatically\n4. 🔄 **Reflect** on any errors and self-correct (up to 3 attempts)\n5. ✅ **Deliver** verified, working code\n\n**Example problems:**\n- `Write a binary search function`\n- `Implement a linked list in Python`\n- `Create a function that reverses words in a sentence`\n- `Solve FizzBuzz`\n\nDescribe your coding problem and I'll generate clean, tested Python code!"
+  },
+  deep_search: {
+    name: 'Deep Search & Report Generator',
+    icon: '📊',
+    color: '#6d4c41',
+    description: 'Generate comprehensive AI research reports with live web data',
+    placeholder: 'Enter a topic to research (e.g., "Quantum Computing", "Climate Change impacts 2026")',
+    welcomeMessage: "Welcome to Deep Search & Report Generator! 📊\n\nI generate comprehensive, well-researched reports using a **multi-agent parallel pipeline** powered by Gemini + live web search:\n\n1. 📋 **Report Planner** — Designs the report structure with Introduction, key sections & Conclusion\n2. 🔎 **Parallel Researchers** — Each section is researched simultaneously using live web queries\n3. ✍️ **Parallel Section Writers** — All sections are drafted concurrently with cited sources\n4. ✨ **Parallel Final Writers** — Every section is refined and polished in parallel\n5. 📄 **Report Compiler** — Everything is assembled into a final structured report\n\n**Example topics:**\n- `The future of Artificial Intelligence`\n- `Renewable energy trends 2026`\n- `Blockchain in supply chain management`\n- `Mental health awareness in workplaces`\n\nEnter any topic below and I'll generate a full research report!"
   }
 };
 
@@ -932,12 +948,24 @@ function AgentChat() {
 
 // Helper function to format message with basic markdown
 function formatMessage(text) {
-  // Escape HTML first (but preserve our markdown)
+  // Escape HTML first
   let formatted = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  
+
+  // Fenced code blocks  ```lang\n...\n```  (must run before <br> replacement)
+  formatted = formatted.replace(
+    /```(\w*)\n?([\s\S]*?)```/g,
+    (_, lang, code) => {
+      const langLabel = lang ? `<span class="code-lang">${lang}</span>` : '';
+      return `<div class="code-block">${langLabel}<pre><code>${code.trimEnd()}</code></pre></div>`;
+    }
+  );
+
+  // Inline code  `code`
+  formatted = formatted.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+
   // Convert markdown-like formatting
   formatted = formatted
     // Headers

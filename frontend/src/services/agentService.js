@@ -1,6 +1,6 @@
 import api from './api';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 export const agentService = {
   // Generate a learning roadmap (non-streaming)
@@ -18,7 +18,7 @@ export const agentService = {
   // Generate a learning roadmap with streaming
   async generateRoadmapStream(data, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agents/roadmap/stream`, {
         method: 'POST',
@@ -41,10 +41,10 @@ export const agentService = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+        
         const text = decoder.decode(value);
         const lines = text.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -82,7 +82,7 @@ export const agentService = {
   // Get resources with streaming
   async getResourcesStream(data, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agents/resources/stream`, {
         method: 'POST',
@@ -105,10 +105,10 @@ export const agentService = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+        
         const text = decoder.decode(value);
         const lines = text.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -143,7 +143,7 @@ export const agentService = {
   // Ask question with streaming (supports RAG with session_id)
   async askQuestionStream(data, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agents/qa/stream`, {
         method: 'POST',
@@ -164,10 +164,10 @@ export const agentService = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+        
         const text = decoder.decode(value);
         const lines = text.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -208,21 +208,21 @@ export const agentService = {
   async uploadDocument(file, sessionId = 'default') {
     const formData = new FormData();
     formData.append('file', file);
-
+    
     const token = localStorage.getItem('token');
-    const response = await fetch(`${API_BASE_URL}/agents/qa/upload?session_id=${sessionId}`, {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/agents/qa/upload?session_id=${sessionId}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`
       },
       body: formData
     });
-
+    
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || 'Failed to upload document');
     }
-
+    
     return response.json();
   },
 
@@ -254,9 +254,9 @@ export const agentService = {
   // Send quiz message with streaming
   async quizMessageStream(data, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/quiz/stream`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/agents/quiz/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -277,7 +277,7 @@ export const agentService = {
 
       while (true) {
         const { done, value } = await reader.read();
-
+        
         if (done) {
           onComplete();
           break;
@@ -285,7 +285,7 @@ export const agentService = {
 
         const chunk = decoder.decode(value);
         const lines = chunk.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -337,7 +337,7 @@ export const agentService = {
   // Solve math problem with streaming (Chain of Thought)
   async solveMathProblemStream(data, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agents/math/solve/stream`, {
         method: 'POST',
@@ -360,10 +360,10 @@ export const agentService = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+        
         const text = decoder.decode(value);
         const lines = text.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -400,10 +400,10 @@ export const agentService = {
   // Solve math problem from image with streaming
   async solveMathImageStream(file, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     const formData = new FormData();
     formData.append('file', file);
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agents/math/solve-image/stream`, {
         method: 'POST',
@@ -424,10 +424,10 @@ export const agentService = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+        
         const text = decoder.decode(value);
         const lines = text.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -458,17 +458,17 @@ export const agentService = {
   // Search jobs with streaming (using Tavily)
   async searchJobsStream(data, onChunk, onComplete, onError) {
     const token = localStorage.getItem('token');
-
+    
     // Parse location from query if provided (e.g., "python developer in London")
     let query = data.query;
     let location = data.location || '';
-
+    
     const inMatch = query.match(/(.+?)\s+in\s+(.+)/i);
     if (inMatch && !data.location) {
       query = inMatch[1].trim();
       location = inMatch[2].trim();
     }
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agents/jobs/search/stream`, {
         method: 'POST',
@@ -480,6 +480,70 @@ export const agentService = {
           query: query,
           location: location
         })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(line.slice(6));
+              if (json.chunk) {
+                onChunk(json.chunk);
+              } else if (json.done) {
+                onComplete();
+                return;
+              } else if (json.error) {
+                onError(json.error);
+                return;
+              }
+            } catch (e) {
+              // Ignore JSON parse errors for incomplete chunks
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Job search stream error:', error);
+      onError(error.message || 'Failed to connect to job search service');
+    }
+  },
+
+  // Search jobs (non-streaming)
+  async searchJobs(data) {
+    const response = await api.post('/agents/jobs/search', {
+      query: data.query,
+      location: data.location || ''
+    });
+    return response.data;
+  },
+
+  // ============= Code Assistant Agent =============
+
+  // Solve a coding problem with streaming (Generate → Execute & Reflect loop)
+  async solveCodeProblemStream(data, onChunk, onComplete, onError) {
+    const token = localStorage.getItem('token');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/agents/code/solve/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ problem: data.problem }),
       });
 
       if (!response.ok) {
@@ -516,16 +580,78 @@ export const agentService = {
         }
       }
     } catch (error) {
-      console.error('Job search stream error:', error);
-      onError(error.message || 'Failed to connect to job search service');
+      console.error('Code Assistant stream error:', error);
+      onError(error.message || 'Failed to connect to Code Assistant');
     }
   },
 
-  // Search jobs (non-streaming)
-  async searchJobs(data) {
-    const response = await api.post('/agents/jobs/search', {
-      query: data.query,
-      location: data.location || ''
+  // Solve a coding problem (non-streaming)
+  async solveCodeProblem(data) {
+    const response = await api.post('/agents/code/solve', {
+      problem: data.problem,
+    });
+    return response.data;
+  },
+
+  // ============= Deep Search & Report Generator =============
+
+  // Generate a full research report with streaming progress
+  async deepSearchStream(data, onChunk, onComplete, onError) {
+    const token = localStorage.getItem('token');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/agents/deep-search/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ topic: data.topic }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(line.slice(6));
+              if (json.chunk) {
+                onChunk(json.chunk);
+              } else if (json.done) {
+                onComplete();
+                return;
+              } else if (json.error) {
+                onError(json.error);
+                return;
+              }
+            } catch (e) {
+              // Ignore JSON parse errors for incomplete chunks
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Deep Search stream error:', error);
+      onError(error.message || 'Failed to connect to Deep Search agent');
+    }
+  },
+
+  // Generate a full research report (non-streaming)
+  async deepSearch(data) {
+    const response = await api.post('/agents/deep-search', {
+      topic: data.topic,
     });
     return response.data;
   },
@@ -548,7 +674,7 @@ export const agentService = {
     if (agentType) params.append('agent_type', agentType);
     params.append('limit', limit);
     params.append('skip', skip);
-
+    
     const response = await api.get(`/agent-chats/list?${params.toString()}`);
     return response.data;
   },
@@ -580,7 +706,7 @@ export const agentService = {
   // Send message with streaming (unified endpoint)
   async sendMessageStream(data, onChunk, onComplete, onError, onMeta) {
     const token = localStorage.getItem('token');
-
+    
     try {
       const response = await fetch(`${API_BASE_URL}/agent-chats/send/stream`, {
         method: 'POST',
@@ -602,10 +728,10 @@ export const agentService = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+        
         const text = decoder.decode(value);
         const lines = text.split('\n');
-
+        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {

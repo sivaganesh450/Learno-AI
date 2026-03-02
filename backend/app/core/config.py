@@ -15,7 +15,18 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
-    
+    TAVILY_API_KEY: Optional[str] = None
+
+    # Gemini model name (overridable via .env)
+    GEMINI_MODEL: str = "gemini-2.0-flash"
+
+    # Code Assistant settings
+    CODE_ASSISTANT_MAX_ATTEMPTS: int = 3
+
+    # Deep Search & Report Generator settings
+    DEEP_SEARCH_MAX_SECTIONS: int = 5      # max body sections (excl. intro/conclusion)
+    DEEP_SEARCH_SEARCH_DEPTH: str = "advanced"  # basic | advanced
+
     class Config:
         env_file = ".env"
         case_sensitive = True

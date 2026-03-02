@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, AsyncGenerator, List
 import json
-from app.services.agents import roadmap_agent, resources_agent, summarizer_agent, quiz_agent, math_solver_agent, job_search_agent
+from app.services.agents import roadmap_agent, resources_agent, summarizer_agent, quiz_agent, math_solver_agent, job_search_agent, code_assistant_agent, deep_search_agent
 from app.api.v1.deps import get_current_user
 from app.models.user import UserInDB
 
@@ -43,6 +43,14 @@ class MathProblemRequest(BaseModel):
 class JobSearchRequest(BaseModel):
     query: str
     location: Optional[str] = ""
+
+
+class CodeProblemRequest(BaseModel):
+    problem: str
+
+
+class DeepSearchRequest(BaseModel):
+    topic: str
 
 
 class AgentResponse(BaseModel):
@@ -274,7 +282,7 @@ async def start_quiz_session(
     """
     session_key = f"{current_user.id}_{request.session_id}"
     
-    response = await quiz_agent.start_session(
+    response = quiz_agent.start_session(
         session_id=session_key,
         domain=request.domain,
         purpose=request.purpose,
@@ -680,3 +688,93 @@ async def search_jobs(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching jobs: {str(e)}")
+
+
+# ============= Code Assistant Agent Endpoints =============
+
+@router.post("/code/solve/stream")
+async def solve_code_stream(
+    request: CodeProblemRequest,
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Solve a coding problem with streaming.
+    Uses Generate → Execute & Reflect loop (Gemini + CodeSolution schema).
+    """
+    async def stream_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for chunk in code_assistant_agent.solve_stream(problem=request.problem):
+                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/code/solve", response_model=AgentResponse)
+async def solve_code(
+    request: CodeProblemRequest,
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Solve a coding problem (non-streaming).
+    """
+    try:
+        response = await code_assistant_agent.solve(problem=request.problem)
+        return AgentResponse(agent="Code Assistant", response=response)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Code Assistant error: {str(e)}")
+
+
+# ============= Deep Search & Report Generator Endpoints =============
+
+@router.post("/deep-search/stream")
+async def deep_search_stream(
+    request: DeepSearchRequest,
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Generate a deep research report with streaming progress.
+    Follows: Report Planner → Parallel Section Writers → Parallel Final Writers → Compile.
+    """
+    async def stream_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for chunk in deep_search_agent.generate_stream(topic=request.topic):
+                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/deep-search", response_model=AgentResponse)
+async def deep_search(
+    request: DeepSearchRequest,
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Generate a deep research report (non-streaming).
+    """
+    try:
+        report = await deep_search_agent.generate(topic=request.topic)
+        return AgentResponse(agent="Deep Search & Report Generator", response=report)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Deep Search error: {str(e)}")

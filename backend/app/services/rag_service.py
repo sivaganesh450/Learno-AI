@@ -3,7 +3,7 @@ Agentic RAG Service for Summarizer Agent
 Implements Conversational Agentic RAG Architecture:
 1. History Aware Query Rephraser - Rephrases follow-up questions into standalone queries
 2. Router Agent - Decides whether to use documents, web search, or both
-3. Vector DB (FAISS) - Stores document embeddings for retrieval
+3. Vector DB (ChromaDB) - Stores document embeddings for retrieval
 4. Tavily Web Search - For external/current information
 5. RAG Pipeline - Retrieves context and generates answers
 6. Tesseract OCR - For extracting text from images
@@ -17,17 +17,7 @@ from pathlib import Path
 
 # Document loaders
 from pypdf import PdfReader
-try:
-    from docx import Document as DocxDocument
-except ImportError:
-    DocxDocument = None
-    print("Warning: python-docx not installed. DOCX support disabled.")
-
-try:
-    from pptx import Presentation
-except ImportError:
-    Presentation = None
-    print("Warning: python-pptx not installed. PPTX support disabled.")
+from docx import Document as DocxDocument
 
 # Image processing
 from PIL import Image
@@ -35,8 +25,7 @@ from PIL import Image
 # Tesseract for OCR
 try:
     import pytesseract
-    # Default windows path, but in Linux/Render it usually just works if installed
-    # pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe" 
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     TESSERACT_AVAILABLE = True
     print("Tesseract OCR initialized for image text extraction")
 except:
@@ -44,25 +33,16 @@ except:
     print("Tesseract not available for image OCR")
 
 # LangChain components
-try:
-    from langchain_core.documents import Document
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-    from langchain_community.chat_message_histories import ChatMessageHistory
-    # Vector Store
-    from langchain_community.vectorstores import FAISS
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-except ImportError as e:
-    print(f"Warning: LangChain components not fully installed: {e}")
-    Document = None
-    RecursiveCharacterTextSplitter = None
-    HumanMessage, AIMessage, SystemMessage = None, None, None
-    ChatMessageHistory = None
-    FAISS = None
-    GoogleGenerativeAIEmbeddings = None
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_ollama import ChatOllama
 
-from google import genai
-import google.generativeai as genai_legacy # For embeddings if needed directly
+# ChromaDB with default embeddings
+import chromadb
+from chromadb.config import Settings
+from chromadb.utils import embedding_functions
 
 # Tavily for web search
 from tavily import TavilyClient
@@ -75,7 +55,7 @@ class RAGService:
         self.name = "Agentic RAG Summarizer System"
         
         # Initialize Tavily for web search
-        TAVILY_API_KEY = "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" # Ideally from env
+        TAVILY_API_KEY = "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"
         try:
             self.tavily = TavilyClient(api_key=TAVILY_API_KEY)
             print("Tavily client initialized for Agentic RAG")
@@ -83,39 +63,48 @@ class RAGService:
             print(f"Failed to initialize Tavily: {e}")
             self.tavily = None
         
-        print("Initializing FAISS Vector Store...")
+        print("Initializing ChromaDB...")
         
-        # Initialize Embeddings
+        # Use ephemeral client (in-memory) to avoid persistence issues
+        # Documents will be re-uploaded each session
         try:
-            self.embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/text-embedding-004",
-                google_api_key=os.environ.get("GOOGLE_API_KEY")
+            self.chroma_client = chromadb.Client()
+            
+            # Use ChromaDB's default embedding function
+            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            
+            # Get or create collection with embedding function
+            self.collection = self.chroma_client.get_or_create_collection(
+                name="lerno_documents",
+                embedding_function=self.embedding_function,
+                metadata={"hnsw:space": "cosine"}
             )
-            print("Google Generative AI Embeddings initialized")
+            print("ChromaDB initialized (in-memory)")
         except Exception as e:
-            print(f"Failed to initialize Embeddings: {e}")
-            self.embeddings = None
-
-        # Session-based indices: session_id -> FAISS index
-        self.session_indices: Dict[str, FAISS] = {}
+            print(f"ChromaDB initialization error: {e}")
+            self.collection = None
         
-        # Initialize Gemini Client for Generation
+        # Initialize LLM (Ollama with Llama)
         try:
-            self.client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-            print("Gemini client initialized for RAG")
+            self.llm = ChatOllama(
+                model="llama3.2:latest",
+                base_url="http://localhost:11434",
+                temperature=0.5
+            )
+            print("Ollama LLM initialized for RAG")
         except Exception as e:
-            print(f"Failed to initialize Gemini: {e}")
-            self.client = None
+            print(f"Failed to initialize Ollama: {e}")
+            self.llm = None
         
         # Text splitter for chunking documents
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
-            separators=["\\n\\n", "\\n", ". ", " ", ""]
+            separators=["\n\n", "\n", ". ", " ", ""]
         )
         
-        # Session-based conversation history
+        # Session-based conversation history (k=3 turns like ConversationBufferWindowMemory)
         self.session_histories: Dict[str, ChatMessageHistory] = {}
         self.k = 3  # Keep last k conversation turns
         
@@ -160,9 +149,9 @@ class RAGService:
                 title = result.get('title', 'No title')
                 content = result.get('content', '')[:300]
                 url = result.get('url', '')
-                results.append(f"[{i}] **{title}**\\n{content}...\\n🔗 {url}")
+                results.append(f"[{i}] **{title}**\n{content}...\n🔗 {url}")
             
-            web_context = "\\n\\n".join(results)
+            web_context = "\n\n".join(results)
             print(f"[Agentic RAG] Found {len(response.get('results', []))} web results")
             return web_context
             
@@ -193,12 +182,13 @@ class RAGService:
         """Clear session history and documents"""
         if session_id in self.session_histories:
             del self.session_histories[session_id]
-        
-        # Clear FAISS index for session if exists
-        if session_id in self.session_indices:
-            del self.session_indices[session_id]
-            
         if session_id in self.session_documents:
+            # Delete documents from ChromaDB
+            for doc_id in self.session_documents[session_id]:
+                try:
+                    self.collection.delete(where={"source": doc_id})
+                except Exception as e:
+                    print(f"Error deleting document {doc_id}: {e}")
             del self.session_documents[session_id]
     
     def _extract_text_from_pdf(self, file_path: str) -> str:
@@ -209,7 +199,7 @@ class RAGService:
             for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
-                    text += page_text + "\\n"
+                    text += page_text + "\n"
         except Exception as e:
             print(f"Error extracting PDF: {e}")
         return text
@@ -220,27 +210,11 @@ class RAGService:
         try:
             doc = DocxDocument(file_path)
             for para in doc.paragraphs:
-                text += para.text + "\\n"
+                text += para.text + "\n"
         except Exception as e:
             print(f"Error extracting DOCX: {e}")
         return text
     
-    def _extract_text_from_pptx(self, file_path: str) -> str:
-        """Extract text from PPTX file"""
-        if not Presentation:
-            return "[PPTX support disabled. Install python-pptx]"
-        
-        text = ""
-        try:
-            prs = Presentation(file_path)
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        text += shape.text + "\\n"
-        except Exception as e:
-            print(f"Error extracting PPTX: {e}")
-        return text
-
     def _extract_text_from_txt(self, file_path: str) -> str:
         """Extract text from TXT file"""
         try:
@@ -283,8 +257,8 @@ class RAGService:
 
     async def process_document(self, file_content: bytes, filename: str, session_id: str) -> Dict:
         """Process uploaded document and add to vector store"""
-        if not self.embeddings:
-            return {"success": False, "error": "Embeddings not initialized. Check API Key."}
+        if not self.collection:
+            return {"success": False, "error": "ChromaDB not initialized."}
         
         print(f"[RAG] Processing document: {filename} for session: {session_id}")
         
@@ -300,13 +274,13 @@ class RAGService:
                 text = self._extract_text_from_pdf(tmp_path)
             elif suffix in ['.docx', '.doc']:
                 text = self._extract_text_from_docx(tmp_path)
-            elif suffix in ['.pptx', '.ppt']:
-                text = self._extract_text_from_pptx(tmp_path)
             elif suffix in ['.txt', '.md', '.py', '.js', '.json', '.csv']:
                 text = self._extract_text_from_txt(tmp_path)
             elif suffix in ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp']:
-                print(f"[RAG] Using Tesseract for image: {filename}")
+                # Use TrOCR for image text extraction
+                print(f"[RAG] Using TrOCR for image: {filename}")
                 text = self._extract_text_from_image(tmp_path)
+                text = self._extract_text_from_txt(tmp_path)
             else:
                 return {"success": False, "error": f"Unsupported file type: {suffix}"}
             
@@ -314,36 +288,40 @@ class RAGService:
                 return {"success": False, "error": "Could not extract text from document"}
             
             # Split text into chunks
-            chunk_texts = self.text_splitter.split_text(text)
-            print(f"[RAG] Split document into {len(chunk_texts)} chunks")
+            chunks = self.text_splitter.split_text(text)
+            print(f"[RAG] Split document into {len(chunks)} chunks")
             
-            # Use LangChain Document objects
-            docs = [
-                Document(
-                    page_content=chunk, 
-                    metadata={"source": filename, "session_id": session_id}
-                ) for chunk in chunk_texts
+            # Create document ID and prepare for ChromaDB
+            doc_id = f"{session_id}_{filename}"
+            
+            # Add to ChromaDB collection directly
+            ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+            metadatas = [
+                {
+                    "source": doc_id,
+                    "filename": filename,
+                    "session_id": session_id,
+                    "chunk_index": i
+                }
+                for i in range(len(chunks))
             ]
             
-            # Add to FAISS Index
-            if session_id in self.session_indices:
-                # Add to existing index
-                self.session_indices[session_id].add_documents(docs)
-                print(f"[RAG] Added to existing FAISS index for session {session_id}")
-            else:
-                # Create new index
-                self.session_indices[session_id] = FAISS.from_documents(docs, self.embeddings)
-                print(f"[RAG] Created new FAISS index for session {session_id}")
+            self.collection.add(
+                ids=ids,
+                documents=chunks,
+                metadatas=metadatas
+            )
+            print(f"[RAG] Added {len(chunks)} chunks to ChromaDB")
             
             # Track document for session
             if session_id not in self.session_documents:
                 self.session_documents[session_id] = []
-            self.session_documents[session_id].append(filename)
+            self.session_documents[session_id].append(doc_id)
             
             return {
                 "success": True,
                 "filename": filename,
-                "chunks": len(chunk_texts),
+                "chunks": len(chunks),
                 "characters": len(text)
             }
             
@@ -365,13 +343,14 @@ class RAGService:
                 content = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
                 formatted.append(f"Assistant: {content}")
         
-        return "\\n".join(formatted)
+        return "\n".join(formatted)
     
     async def _rephrase_query(self, query: str, history_messages: List) -> str:
         """
         History Aware Query Rephraser
+        Rephrases follow-up questions into standalone queries using conversation context
         """
-        if not history_messages or not self.client:
+        if not history_messages or not self.llm:
             return query
         
         history_text = self._format_history_for_rephraser(history_messages)
@@ -388,11 +367,8 @@ Current Query: {query}
 Rephrased Query (standalone question):"""
         
         try:
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=rephraser_prompt
-            )
-            rephrased = response.text.strip()
+            response = await self.llm.ainvoke([HumanMessage(content=rephraser_prompt)])
+            rephrased = response.content.strip()
             print(f"[RAG Rephraser] Original: '{query}' → Rephrased: '{rephrased}'")
             return rephrased
         except Exception as e:
@@ -401,13 +377,33 @@ Rephrased Query (standalone question):"""
     
     def _retrieve_context(self, query: str, session_id: str, k: int = 4) -> List[Document]:
         """Retrieve relevant document chunks from vector store"""
-        if session_id not in self.session_indices:
+        if not self.collection:
             return []
         
         try:
-            # Retrieve from session-specific FAISS index
-            # similarity_search returns list of Documents
-            docs = self.session_indices[session_id].similarity_search(query, k=k)
+            # Search with session filter using ChromaDB query
+            # Include distances to filter by relevance
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=k,
+                where={"session_id": session_id},
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            # Convert to list of Document objects, filtering by relevance score
+            # ChromaDB uses L2 distance - lower is better. Threshold of 1.0 filters irrelevant results
+            RELEVANCE_THRESHOLD = 1.0
+            docs = []
+            if results and results['documents'] and len(results['documents']) > 0:
+                for i, doc_text in enumerate(results['documents'][0]):
+                    distance = results['distances'][0][i] if results.get('distances') else 0
+                    # Only include documents with good relevance score
+                    if distance < RELEVANCE_THRESHOLD:
+                        metadata = results['metadatas'][0][i] if results['metadatas'] else {}
+                        docs.append(Document(page_content=doc_text, metadata=metadata))
+                        print(f"[RAG Retrieval] Chunk {i+1} distance: {distance:.3f} - RELEVANT")
+                    else:
+                        print(f"[RAG Retrieval] Chunk {i+1} distance: {distance:.3f} - FILTERED OUT")
             
             print(f"[RAG Retrieval] Found {len(docs)} relevant chunks for query: '{query[:50]}...'")
             return docs
@@ -422,25 +418,37 @@ Rephrased Query (standalone question):"""
         
         context_parts = []
         for i, doc in enumerate(documents, 1):
-            source = doc.metadata.get('source', 'Unknown')
-            content = doc.page_content
-            context_parts.append(f"[Chunk {i} from {source}]\\n{content}")
+            if hasattr(doc, 'metadata'):
+                source = doc.metadata.get('filename', 'Unknown')
+                content = doc.page_content
+            else:
+                source = 'Unknown'
+                content = str(doc)
+            context_parts.append(f"[Chunk {i} from {source}]\n{content}")
         
-        return "\\n\\n".join(context_parts)
+        return "\n\n".join(context_parts)
     
     async def answer_stream(self, question: str, session_id: str = "default"):
         """
         Answer question using Agentic RAG with streaming
+        
+        Architecture:
+        1. Get conversation history
+        2. Rephrase query using history (History Aware Query Rephraser)
+        3. Router: Decide if web search is needed
+        4. Retrieve relevant context from ChromaDB (if documents uploaded)
+        5. Search web with Tavily (if needed)
+        6. Generate answer using combined context
         """
-        if not self.client:
-            yield "Error: Gemini client not initialized. Please check API key."
+        if not self.llm:
+            yield "Error: LLM not initialized. Please ensure Ollama is running."
             return
         
         # Step 1: Get conversation history
         history_messages = self.get_windowed_history(session_id)
         print(f"[Agentic RAG] Session: {session_id}, History messages: {len(history_messages)}")
         
-        # Step 2: Rephrase query using history
+        # Step 2: Rephrase query using history (History Aware Query Rephraser)
         rephrased_query = await self._rephrase_query(question, history_messages)
         
         # Step 3: Router - Check if web search is needed
@@ -453,6 +461,7 @@ Rephrased Query (standalone question):"""
         if has_documents:
             retrieved_docs = self._retrieve_context(rephrased_query, session_id)
             doc_context = self._format_context(retrieved_docs)
+            # Check if we actually got relevant content
             has_relevant_docs = doc_context and doc_context != "No relevant documents found."
         
         # Step 5: Search web if needed OR if documents don't have relevant info
@@ -465,11 +474,11 @@ Rephrased Query (standalone question):"""
         sources_used = []
         
         if doc_context and doc_context != "No relevant documents found.":
-            combined_context += f"📄 **From Uploaded Documents:**\\n{doc_context}\\n\\n"
+            combined_context += f"📄 **From Uploaded Documents:**\n{doc_context}\n\n"
             sources_used.append("documents")
         
         if web_context:
-            combined_context += f"🌐 **From Web Search:**\\n{web_context}\\n\\n"
+            combined_context += f"🌐 **From Web Search:**\n{web_context}\n\n"
             sources_used.append("web")
         
         if not combined_context:
@@ -502,18 +511,19 @@ Conversation History:
 {history_text}
 
 Answer the query using the context above. If web search results are provided, use them to give a complete answer. Do NOT ask user permission to search - just use the provided results."""
+
+        messages = [
+            SystemMessage(content=rag_system_prompt),
+            HumanMessage(content=rag_user_prompt)
+        ]
         
         # Stream the response
         full_response = ""
         try:
-            response = self.client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=f"{rag_system_prompt}\\n\\n{rag_user_prompt}"
-            )
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield chunk.text
+            async for chunk in self.llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    full_response += chunk.content
+                    yield chunk.content
             
             # Save context after streaming completes
             if full_response:
