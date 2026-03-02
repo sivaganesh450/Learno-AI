@@ -36,6 +36,10 @@ tavily-python==0.7.21
 # Vector store
 chromadb==1.4.1
 
+# Document parsing
+pypdf>=4.0.0
+python-docx>=1.0.0
+
 # Image / OCR
 pillow>=10.0.0
 pytesseract>=0.3.10
