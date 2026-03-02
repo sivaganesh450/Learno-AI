@@ -19,9 +19,8 @@ python-dotenv==1.0.1
 pydantic==2.9.2
 pydantic-settings==2.5.2
 
-# LangChain ecosystem (all pinned to compatible versions)
-langchain==0.3.27
-langchain-core==1.2.16
+# LangChain ecosystem — let pip resolve langchain/langchain-core versions
+# from sub-package constraints to avoid conflicts
 langchain-community==0.4.1
 langchain-text-splitters==0.3.11
 langchain-ollama==0.2.1
