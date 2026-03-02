@@ -2,6 +2,27 @@ import api from './api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+// Centralized fetch wrapper: injects auth token and mirrors the axios interceptor's 401 handling
+async function authenticatedFetch(url, options = {}) {
+  const token = localStorage.getItem('token');
+  const headers = {
+    ...(options.headers || {}),
+    'Authorization': `Bearer ${token}`,
+  };
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.href = '/login';
+    throw new Error('Session expired. Please log in again.');
+  }
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    throw new Error(errBody.detail || `Server error: ${response.status}`);
+  }
+  return response;
+}
+
 export const agentService = {
   // Generate a learning roadmap (non-streaming)
   async generateRoadmap(data) {
@@ -17,15 +38,10 @@ export const agentService = {
 
   // Generate a learning roadmap with streaming
   async generateRoadmapStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/roadmap/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/roadmap/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: data.message,
           topic: data.topic || data.message,
@@ -34,11 +50,6 @@ export const agentService = {
           skills_known: data.skills_known || ''
         })
       });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.detail || `Server error: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -86,15 +97,10 @@ export const agentService = {
 
   // Get resources with streaming
   async getResourcesStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/resources/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/resources/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: data.message,
           topic: data.topic || data.message,
@@ -103,11 +109,6 @@ export const agentService = {
           session_id: data.session_id || 'default'
         })
       });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.detail || `Server error: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -152,26 +153,16 @@ export const agentService = {
 
   // Ask question with streaming (supports RAG with session_id)
   async askQuestionStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/qa/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/qa/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: data.message,
           topic: data.topic || data.message,
           session_id: data.session_id || 'default'
         })
       });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.detail || `Server error: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -224,20 +215,10 @@ export const agentService = {
     const formData = new FormData();
     formData.append('file', file);
     
-    const token = localStorage.getItem('token');
-    const response = await fetch(`${API_BASE_URL}/agents/qa/upload?session_id=${sessionId}`, {
+    const response = await authenticatedFetch(`${API_BASE_URL}/agents/qa/upload?session_id=${sessionId}`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
       body: formData
     });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Failed to upload document');
-    }
-    
     return response.json();
   },
 
@@ -268,24 +249,15 @@ export const agentService = {
 
   // Send quiz message with streaming
   async quizMessageStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/quiz/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/quiz/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: data.message,
           session_id: data.session_id || 'default'
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -351,23 +323,14 @@ export const agentService = {
 
   // Solve math problem with streaming (Chain of Thought)
   async solveMathProblemStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/math/solve/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/math/solve/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           problem: data.problem
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -414,24 +377,14 @@ export const agentService = {
 
   // Solve math problem from image with streaming
   async solveMathImageStream(file, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     const formData = new FormData();
     formData.append('file', file);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/math/solve-image/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/math/solve-image/stream`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
         body: formData
       });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: `HTTP error! status: ${response.status}` }));
-        throw new Error(error.detail || `HTTP error! status: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -472,8 +425,6 @@ export const agentService = {
 
   // Search jobs with streaming (using Tavily)
   async searchJobsStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-    
     // Parse location from query if provided (e.g., "python developer in London")
     let query = data.query;
     let location = data.location || '';
@@ -485,21 +436,14 @@ export const agentService = {
     }
     
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/jobs/search/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/jobs/search/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: query,
           location: location
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -549,21 +493,12 @@ export const agentService = {
 
   // Solve a coding problem with streaming (Generate → Execute & Reflect loop)
   async solveCodeProblemStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/code/solve/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/code/solve/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ problem: data.problem }),
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -612,21 +547,12 @@ export const agentService = {
 
   // Generate a full research report with streaming progress
   async deepSearchStream(data, onChunk, onComplete, onError) {
-    const token = localStorage.getItem('token');
-
     try {
-      const response = await fetch(`${API_BASE_URL}/agents/deep-search/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agents/deep-search/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: data.topic }),
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -720,15 +646,10 @@ export const agentService = {
 
   // Send message with streaming (unified endpoint)
   async sendMessageStream(data, onChunk, onComplete, onError, onMeta) {
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/agent-chats/send/stream`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/agent-chats/send/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: data.chat_id || null,
           agent_type: data.agent_type,
@@ -736,11 +657,6 @@ export const agentService = {
           form_data: data.form_data || null
         })
       });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.detail || `Server error: ${response.status}`);
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
