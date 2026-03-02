@@ -16,7 +16,7 @@ passlib[bcrypt]==1.7.4
 python-dotenv==1.0.1
 
 # Pydantic
-pydantic>=2.9.2
+pydantic[email]>=2.9.2
 pydantic-settings>=2.5.2
 
 # LangChain ecosystem — minimum bounds only; pip resolves compatible versions
