@@ -35,6 +35,11 @@ export const agentService = {
         })
       });
 
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Server error: ${response.status}`);
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
@@ -99,6 +104,11 @@ export const agentService = {
         })
       });
 
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Server error: ${response.status}`);
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
@@ -157,6 +167,11 @@ export const agentService = {
           session_id: data.session_id || 'default'
         })
       });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Server error: ${response.status}`);
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
