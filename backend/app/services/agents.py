@@ -1696,7 +1696,7 @@ class MathSolverAgent:
             return {
                 "steps": ["LLM not available"],
                 "final_answer": "Error: Cannot reason without LLM",
-                "explanation": "Please ensure Ollama is running."
+                "explanation": "Please ensure GOOGLE_API_KEY is set."
             }
         
         reasoning_prompt = f"""You are an expert {problem_type} specialist. Analyze this problem and create a detailed solution plan.
@@ -1980,7 +1980,7 @@ RULES:
     async def solve_stream(self, problem: str, session_id: str = "default"):
         """Solve a math problem with streaming response"""
         if not self.llm:
-            yield "Error: LLM not initialized. Please ensure Ollama is running."
+            yield "Error: LLM not initialized. Please ensure GOOGLE_API_KEY is set."
             return
         
         # Get conversation history for context

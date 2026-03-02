@@ -39,11 +39,10 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # ChromaDB with default embeddings
 import chromadb
-from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
 # Tavily for web search
@@ -57,10 +56,13 @@ class RAGService:
         self.name = "Agentic RAG Summarizer System"
         
         # Initialize Tavily for web search
-        TAVILY_API_KEY = "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"
+        TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
         try:
-            self.tavily = TavilyClient(api_key=TAVILY_API_KEY)
-            print("Tavily client initialized for Agentic RAG")
+            self.tavily = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
+            if self.tavily:
+                print("Tavily client initialized for Agentic RAG")
+            else:
+                print("Tavily not configured for RAG (TAVILY_API_KEY not set)")
         except Exception as e:
             print(f"Failed to initialize Tavily: {e}")
             self.tavily = None
@@ -70,32 +72,47 @@ class RAGService:
         # Use ephemeral client (in-memory) to avoid persistence issues
         # Documents will be re-uploaded each session
         try:
-            self.chroma_client = chromadb.Client()
+            # EphemeralClient is the 1.x API; falls back to Client() for older versions
+            self.chroma_client = chromadb.EphemeralClient()
             
-            # Use ChromaDB's default embedding function
-            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            # Try to use the default embedding function (requires onnxruntime)
+            try:
+                self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            except Exception:
+                self.embedding_function = None
+                print("ChromaDB: DefaultEmbeddingFunction unavailable, using no embedding function")
             
-            # Get or create collection with embedding function
-            self.collection = self.chroma_client.get_or_create_collection(
-                name="lerno_documents",
-                embedding_function=self.embedding_function,
-                metadata={"hnsw:space": "cosine"}
-            )
+            # Get or create collection
+            collection_kwargs = {
+                "name": "lerno_documents",
+                "metadata": {"hnsw:space": "cosine"}
+            }
+            if self.embedding_function:
+                collection_kwargs["embedding_function"] = self.embedding_function
+            
+            self.collection = self.chroma_client.get_or_create_collection(**collection_kwargs)
             print("ChromaDB initialized (in-memory)")
         except Exception as e:
             print(f"ChromaDB initialization error: {e}")
             self.collection = None
         
-        # Initialize LLM (Ollama with Llama)
+        # Initialize LLM (Gemini)
         try:
-            self.llm = ChatOllama(
-                model="llama3.2:latest",
-                base_url="http://localhost:11434",
-                temperature=0.5
-            )
-            print("Ollama LLM initialized for RAG")
+            from app.core.config import settings as _rag_settings
+            _api_key = _rag_settings.GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY")
+            _model = _rag_settings.GEMINI_MODEL
+            if _api_key:
+                self.llm = ChatGoogleGenerativeAI(
+                    model=_model,
+                    google_api_key=_api_key,
+                    temperature=0.5,
+                )
+                print(f"Gemini LLM initialized for RAG ({_model})")
+            else:
+                print("GOOGLE_API_KEY not set — RAG LLM disabled")
+                self.llm = None
         except Exception as e:
-            print(f"Failed to initialize Ollama: {e}")
+            print(f"Failed to initialize Gemini for RAG: {e}")
             self.llm = None
         
         # Text splitter for chunking documents
@@ -443,7 +460,7 @@ Rephrased Query (standalone question):"""
         6. Generate answer using combined context
         """
         if not self.llm:
-            yield "Error: LLM not initialized. Please ensure Ollama is running."
+            yield "Error: LLM not initialized. Please ensure GOOGLE_API_KEY is set."
             return
         
         # Step 1: Get conversation history
