@@ -36,4 +36,8 @@ async def close_mongo_connection():
 
 def get_database():
     """Get database instance"""
+    if db.db is None:
+        raise RuntimeError(
+            "Database not connected. Check MONGO_URI environment variable on Render."
+        )
     return db.db
