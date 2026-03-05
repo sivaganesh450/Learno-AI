@@ -1,8 +1,13 @@
 # Web framework
 fastapi==0.115.0
-uvicorn[standard]==0.32.0
 python-multipart==0.0.12
 httpx>=0.27.0
+
+# AWS Lambda adapter
+mangum==0.17.0
+
+# AWS SDK (boto3 is in Lambda runtime, but langchain-aws needs a recent version)
+boto3>=1.34.72
 
 # Database
 pymongo==4.6.3
@@ -20,31 +25,26 @@ python-dotenv==1.0.1
 pydantic[email]>=2.9.2
 pydantic-settings>=2.5.2
 
-# LangChain ecosystem — minimum bounds only; pip resolves compatible versions
+# LangChain ecosystem (all 0.2.x for langchain-core >=0.2 compatibility)
 langchain-community>=0.2.0
 langchain-text-splitters>=0.2.0
-langchain-google-genai>=2.0.0
+langchain-aws>=0.2.0
 langgraph>=0.2.0
-
-# Google AI
-google-generativeai>=0.8.0
-google-genai>=1.0.0
 
 # Web search
 tavily-python==0.7.21
-
-# Vector store
-chromadb==1.4.1
 
 # Document parsing
 pypdf>=4.0.0
 python-docx>=1.0.0
 
-# Image / OCR
+# Image processing
 pillow>=10.0.0
-pytesseract>=0.3.10
-pandas>=2.0.0
 
 # Math / numeric
 sympy>=1.12
 numpy>=1.24.0
+
+# Local development only (not needed in Lambda)
+# uvicorn[standard]==0.32.0
+# chromadb==1.4.1

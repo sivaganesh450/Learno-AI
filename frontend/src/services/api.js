@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+// For AWS deployment: API Gateway Invoke URL
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://ih2ztarjgh.execute-api.us-east-1.amazonaws.com/demo/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,

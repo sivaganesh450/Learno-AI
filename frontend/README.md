@@ -1,8 +1,12 @@
 # Lerno Frontend - React Application
 
-Frontend interface for the Lerno Student Learning Assistant.
+Frontend interface for the Lerno Student Learning Assistant, deployed on **AWS CloudFront + S3**.
 
-## Setup
+## Live URL
+
+https://d8y63sf81k9rq.cloudfront.net
+
+## Local Setup
 
 1. Install dependencies:
 ```bash
@@ -37,5 +41,23 @@ npm run build
 
 ## Environment
 
-The app expects the backend API to be running at `http://localhost:8000`
+| File | Variable | Value |
+|---|---|---|
+| `.env.development` | `VITE_API_URL` | `http://localhost:8000/api/v1` |
+| `.env.production` | `VITE_API_URL` | `https://ih2ztarjgh.execute-api.us-east-1.amazonaws.com/demo/api/v1` |
+
+## AWS Deployment
+
+Frontend is hosted on S3 and served via CloudFront:
+- **S3 Bucket:** `lerno-frontend-demo`
+- **CloudFront Distribution:** `E3ENBK1TY2ST0R` (`d8y63sf81k9rq.cloudfront.net`)
+- **403 errors** redirect to `/index.html` for SPA client-side routing
+
+### Redeploying
+
+```bash
+npm run build
+aws s3 sync dist/ s3://lerno-frontend-demo --delete
+aws cloudfront create-invalidation --distribution-id E3ENBK1TY2ST0R --paths "/*"
+```
 

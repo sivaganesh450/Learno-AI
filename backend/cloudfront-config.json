@@ -1,0 +1,44 @@
+{
+  "CallerReference": "lerno-frontend-2026-03-04",
+  "Comment": "Lerno Frontend Distribution",
+  "DefaultCacheBehavior": {
+    "AllowedMethods": {
+      "Quantity": 2,
+      "Items": ["HEAD", "GET"],
+      "CachedMethods": {
+        "Quantity": 2,
+        "Items": ["HEAD", "GET"]
+      }
+    },
+    "TargetOriginId": "lerno-frontend-s3",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+    "Compress": true
+  },
+  "Origins": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "Id": "lerno-frontend-s3",
+        "DomainName": "lerno-frontend-demo.s3.us-east-1.amazonaws.com",
+        "OriginAccessControlId": "E1T8XLW5T2MMVB",
+        "S3OriginConfig": {
+          "OriginAccessIdentity": ""
+        }
+      }
+    ]
+  },
+  "Enabled": true,
+  "DefaultRootObject": "index.html",
+  "CustomErrorResponses": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "ErrorCode": 403,
+        "ResponsePagePath": "/index.html",
+        "ResponseCode": "200",
+        "ErrorCachingMinTTL": 300
+      }
+    ]
+  }
+}

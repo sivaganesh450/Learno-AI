@@ -1,0 +1,1 @@
+{"Description":"OAC for Lerno frontend S3 bucket","Name":"lerno-frontend-oac","OriginAccessControlOriginType":"s3","SigningBehavior":"always","SigningProtocol":"sigv4"}
