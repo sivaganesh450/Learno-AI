@@ -190,7 +190,7 @@ const Dashboard = () => {
                 <span className="step-number" style={{ backgroundColor: '#7c3aed' }}>1</span>
                 <div className="step-content">
                   <h4>Choose Your Agent</h4>
-                  <p>Select from our six powerful AI agents based on your needs.</p>
+                  <p>Select from our eight powerful AI agents based on your needs.</p>
                 </div>
               </div>
               <div className="step">
@@ -225,7 +225,7 @@ const Dashboard = () => {
       <section className="stats-section">
         <div className="stats-grid">
           <div className="stat-item">
-            <span className="stat-number" style={{ color: '#7c3aed' }}>6</span>
+            <span className="stat-number" style={{ color: '#7c3aed' }}>8</span>
             <span className="stat-label">AI Agents</span>
           </div>
           <div className="stat-item">

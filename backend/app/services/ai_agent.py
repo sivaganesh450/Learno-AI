@@ -70,7 +70,14 @@ Provide a helpful, educational response."""
                 HumanMessage(content=user_prompt)
             ]
             response = await self.llm.ainvoke(messages)
-            return response.content
+            content = response.content
+            # Handle list content from ChatBedrockConverse (Llama 3.3)
+            if isinstance(content, list):
+                content = "".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            return content
         except Exception as e:
             print(f"Bedrock LLM error: {e}")
             return f"I'm sorry, I encountered an error generating a response. Please try again. Error: {str(e)}"

@@ -21,6 +21,20 @@ from PIL import Image
 
 load_dotenv()
 
+
+def _extract_text(content):
+    """Extract text from LLM chunk content.
+    ChatBedrockConverse with Llama 3.3 may return content as a list of
+    content blocks (e.g. [{"type": "text", "text": "..."}]) instead of
+    a plain string.  This helper normalises both forms to str."""
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return str(content) if content else ""
+
+
 # Read API keys from settings (no hardcodes)
 from app.core.config import settings as _settings
 _TAVILY_API_KEY = _settings.TAVILY_API_KEY or os.environ.get("TAVILY_API_KEY", "")
@@ -231,7 +245,7 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
             
             # Validate response
             if response and hasattr(response, 'content') and response.content:
-                content = response.content.strip()
+                content = _extract_text(response.content).strip()
                 
                 # Check if response is valid (not just echoing the prompt)
                 if len(content) > 100 and "Phase" in content or "Week" in content or "#" in content:
@@ -566,7 +580,7 @@ Provide a week-by-week or phase-by-phase breakdown that fits within {duration}. 
         try:
             async for chunk in self.llm.astream(messages):
                 if hasattr(chunk, 'content') and chunk.content:
-                    yield chunk.content
+                    yield _extract_text(chunk.content)
         except Exception as e:
             print(f"Streaming error: {e}")
             # Fallback to non-streaming
@@ -705,7 +719,7 @@ class ResourcesAgent:
             
             # Validate response
             if response and hasattr(response, 'content') and response.content:
-                content = response.content.strip()
+                content = _extract_text(response.content).strip()
                 
                 # Check if response is valid
                 if len(content) > 100:
@@ -959,8 +973,9 @@ The conversation history below shows what was previously discussed. Use it to pr
         try:
             async for chunk in self.llm.astream(messages):
                 if hasattr(chunk, 'content') and chunk.content:
-                    full_response += chunk.content
-                    yield chunk.content
+                    text = _extract_text(chunk.content)
+                    full_response += text
+                    yield text
             
             # Save the ORIGINAL user message (not the formatted prompt) for natural history
             if full_response:
@@ -1019,7 +1034,7 @@ class SummarizerAgent:
             
             # Validate response
             if response and hasattr(response, 'content') and response.content:
-                content = response.content.strip()
+                content = _extract_text(response.content).strip()
                 
                 # Check if response is valid
                 if len(content) > 50:
@@ -1127,7 +1142,7 @@ Note: No documents have been uploaded yet. For document-based Q&A, please upload
         try:
             async for chunk in self.llm.astream(messages):
                 if hasattr(chunk, 'content') and chunk.content:
-                    yield chunk.content
+                    yield _extract_text(chunk.content)
         except Exception as e:
             print(f"Streaming error: {e}")
             result = await self.answer(question, session_id)
@@ -1352,7 +1367,7 @@ EXPLANATION: [Brief explanation of why this is correct]"""
                     HumanMessage(content=f"Generate a {difficulty} MCQ for {domain} ({purpose})")
                 ]
                 response = self.llm.invoke(messages)
-                mcq_text = response.content.strip()
+                mcq_text = _extract_text(response.content).strip()
                 
                 # Parse the MCQ response
                 question = ""
@@ -1790,7 +1805,7 @@ Be specific and mathematical. Output in plain text only."""
                 HumanMessage(content=reasoning_prompt)
             ]
             response = self.llm.invoke(messages)
-            reasoning = response.content.strip()
+            reasoning = _extract_text(response.content).strip()
             
             return {
                 "steps": [reasoning],
@@ -2024,7 +2039,7 @@ RULES:
                 HumanMessage(content=formatter_prompt)
             ]
             response = self.llm.invoke(messages)
-            formatted = response.content.strip()
+            formatted = _extract_text(response.content).strip()
             
             return {
                 "explanation": formatted,
@@ -2158,8 +2173,9 @@ IMPORTANT RULES:
         try:
             async for chunk in self.llm.astream(messages):
                 if hasattr(chunk, 'content') and chunk.content:
-                    full_response += chunk.content
-                    yield chunk.content
+                    text = _extract_text(chunk.content)
+                    full_response += text
+                    yield text
             
             # Save context for history
             if full_response:
@@ -2264,8 +2280,9 @@ IMPORTANT RULES:
             # Use vision_llm (llava) for image processing
             async for chunk in vision_llm.astream(messages):
                 if hasattr(chunk, 'content') and chunk.content:
-                    full_response += chunk.content
-                    yield chunk.content
+                    text = _extract_text(chunk.content)
+                    full_response += text
+                    yield text
             
             # Save context for history
             if full_response:
@@ -2569,8 +2586,9 @@ Remember: You can see the previous job listings in the conversation history - us
             try:
                 async for chunk in self.llm.astream(messages):
                     if hasattr(chunk, 'content') and chunk.content:
-                        full_response += chunk.content
-                        yield chunk.content
+                        text = _extract_text(chunk.content)
+                        full_response += text
+                        yield text
                 
                 # Save context
                 if full_response:
@@ -3060,7 +3078,7 @@ class DeepSearchAgent:
         )
         try:
             resp = await self.bedrock.ainvoke([HumanMessage(content=query_prompt)])
-            queries = [q.strip() for q in resp.content.strip().split("\n") if q.strip()][:2]
+            queries = [q.strip() for q in _extract_text(resp.content).strip().split("\n") if q.strip()][:2]
         except Exception as e:
             queries = [f"{topic} {section.title}", f"{topic} {section.description[:60]}"]
 
@@ -3100,7 +3118,7 @@ class DeepSearchAgent:
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ])
-            return f"## {section.title}\n\n{resp.content.strip()}"
+            return f"## {section.title}\n\n{_extract_text(resp.content).strip()}"
         except Exception as e:
             return f"## {section.title}\n\n[Writing error: {e}]"
 
@@ -3190,7 +3208,7 @@ class DeepSearchAgent:
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ])
-            return title, resp.content.strip()
+            return title, _extract_text(resp.content).strip()
         except Exception as e:
             return title, draft  # return original on error
 

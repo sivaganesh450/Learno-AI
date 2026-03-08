@@ -41,6 +41,16 @@ from tavily import TavilyClient
 class RAGService:
     """Agentic RAG Service for document-based Q&A with web search capabilities"""
     
+    @staticmethod
+    def _extract_text(content):
+        """Extract text from LLM chunk content (handles list format from Llama 3.3)."""
+        if isinstance(content, list):
+            return "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+        return str(content) if content else ""
+    
     def __init__(self):
         self.name = "Agentic RAG Summarizer System"
         
@@ -403,7 +413,7 @@ Rephrased Query (standalone question):"""
         
         try:
             response = await self.llm.ainvoke([HumanMessage(content=rephraser_prompt)])
-            rephrased = response.content.strip()
+            rephrased = self._extract_text(response.content).strip()
             print(f"[RAG Rephraser] Original: '{query}' → Rephrased: '{rephrased}'")
             return rephrased
         except Exception as e:
@@ -566,8 +576,9 @@ Answer the query using the context above. If web search results are provided, us
         try:
             async for chunk in self.llm.astream(messages):
                 if hasattr(chunk, 'content') and chunk.content:
-                    full_response += chunk.content
-                    yield chunk.content
+                    text = self._extract_text(chunk.content)
+                    full_response += text
+                    yield text
             
             # Save context after streaming completes
             if full_response:

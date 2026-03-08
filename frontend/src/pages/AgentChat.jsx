@@ -372,22 +372,57 @@ function AgentChat() {
     setIsLoading(true);
 
     try {
-      const response = await agentService.startQuizSession({
-        domain: quizForm.domain,
-        purpose: quizForm.purpose,
-        difficulty: quizForm.difficulty
-      });
-
+      const messageId = Date.now() + 1;
       const assistantMessage = {
-        id: Date.now() + 1,
+        id: messageId,
         role: 'assistant',
-        content: response.response,
+        content: '',
         timestamp: new Date()
       };
       setMessages(prev => [...prev, assistantMessage]);
-      setQuizStarted(true);
-      setIsLoading(false);
 
+      await agentService.sendMessageStream(
+        {
+          chat_id: currentChatId,
+          agent_type: 'quiz',
+          message: 'start',
+          form_data: {
+            domain: quizForm.domain,
+            purpose: quizForm.purpose,
+            difficulty: quizForm.difficulty
+          }
+        },
+        (chunk) => {
+          setMessages(prev => prev.map(m =>
+            m.id === messageId ? { ...m, content: m.content + chunk } : m
+          ));
+        },
+        (data) => {
+          setQuizStarted(true);
+          setIsLoading(false);
+          if (data?.chat_id && !currentChatId) {
+            setCurrentChatId(data.chat_id);
+            setSearchParams({ chat: data.chat_id });
+          }
+        },
+        (error) => {
+          console.error('Streaming error:', error);
+          setMessages(prev => prev.map(m =>
+            m.id === messageId ? {
+              ...m,
+              content: m.content || 'Sorry, I encountered an error starting the quiz session. Please try again.',
+              isError: !m.content
+            } : m
+          ));
+          setIsLoading(false);
+        },
+        (meta) => {
+          if (meta.chat_id && !currentChatId) {
+            setCurrentChatId(meta.chat_id);
+            setSearchParams({ chat: meta.chat_id });
+          }
+        }
+      );
     } catch (error) {
       console.error('Error starting quiz:', error);
       const errorMessage = {
@@ -569,13 +604,8 @@ function AgentChat() {
         duration: roadmapForm.duration,
         skillsKnown: roadmapForm.skillsKnown
       };
-    } else if (agentId === 'quiz' && quizStarted) {
-      formData = {
-        domain: quizForm.domain,
-        purpose: quizForm.purpose,
-        difficulty: quizForm.difficulty
-      };
     }
+    // Note: quiz form_data is only sent during handleQuizFormSubmit, not on follow-up messages
 
     const onChunk = (chunk) => {
       setMessages(prev => prev.map(m => 
